@@ -47,6 +47,7 @@ import { Tab, Market, UserBet, SleepData, Device, UserProfile } from './types';
 import { MOCK_RESOURCES } from './constants.mock';
 import SleepChart from './components/SleepChart';
 import ScoreRing from './components/ScoreRing';
+import WalletModal from './components/WalletModal';
 import { generateSleepInsights } from './services/geminiService';
 import * as dataLoader from './services/dataLoader';
 import * as walletService from './services/walletService';
@@ -392,53 +393,53 @@ const App: React.FC = () => {
     setShowWalletModal(true);
   };
 
-  const handleConnectWallet = async (walletType: string) => {
-    console.log('📱 Mobile wallet connection:', walletType);
+  const handleConnectWallet = async (walletType: 'Phantom' | 'Solflare') => {
+    console.log('🔌 Connecting wallet:', walletType);
     setIsLoading(true);
     
     try {
+      // Check if Phantom/Solflare is available in browser (mobile or desktop)
+      const windowPhantom = (window as any).phantom?.solana;
+      const windowSolflare = (window as any).solflare;
+      
       if (isMobile) {
-        // Mobile: Use deep linking to open wallet app
-        if (walletType === 'Phantom') {
-          // Deep link to Phantom mobile app
-          const dappUrl = encodeURIComponent(window.location.origin);
-          const deepLink = `https://phantom.app/ul/browse/${dappUrl}?ref=solrem`;
-          
-          console.log('📱 Opening Phantom mobile app...');
-          console.log('🔗 Deep link:', deepLink);
-          
-          // Try to open Phantom app
-          window.location.href = deepLink;
-          
-          // Fallback: If app not installed, go to app store
-          setTimeout(() => {
-            const userConfirmed = confirm(
-              'Phantom app is opening...\n\n' +
-              'If nothing happened, you may need to install Phantom:\n' +
-              '• iOS: App Store\n' +
-              '• Android: Google Play\n\n' +
-              'Install now?'
-            );
-            
-            if (userConfirmed) {
-              window.location.href = 'https://phantom.app/download';
-            }
-          }, 2000);
-          
-        } else if (walletType === 'Solflare') {
-          // Solflare mobile
-          const deepLink = `https://solflare.com/ul/v1/browse/${encodeURIComponent(window.location.origin)}`;
-          window.location.href = deepLink;
-          
-          setTimeout(() => {
-            const userConfirmed = confirm('Solflare app is opening... Install if needed?');
-            if (userConfirmed) {
-              window.location.href = 'https://solflare.com/download';
-            }
-          }, 2000);
+        // Mobile strategy: Check if wallet is injected (user is in wallet's in-app browser)
+        if (walletType === 'Phantom' && windowPhantom && windowPhantom.isPhantom) {
+          console.log('✅ Phantom detected in mobile browser');
+          try {
+            await windowPhantom.connect();
+            setShowWalletModal(false);
+            setIsLoading(false);
+            return;
+          } catch (err) {
+            console.error('❌ Phantom connection failed:', err);
+          }
+        } else if (walletType === 'Solflare' && windowSolflare && windowSolflare.isSolflare) {
+          console.log('✅ Solflare detected in mobile browser');
+          try {
+            await windowSolflare.connect();
+            setShowWalletModal(false);
+            setIsLoading(false);
+            return;
+          } catch (err) {
+            console.error('❌ Solflare connection failed:', err);
+          }
         }
+        
+        // If wallet not injected, show instructions to open in wallet browser
+        alert(
+          `📱 Mobile Instructions:\n\n` +
+          `1. Open ${walletType} app on your phone\n` +
+          `2. Go to the browser inside ${walletType}\n` +
+          `3. Visit: ${window.location.origin}\n` +
+          `4. Click "Connect Wallet" again\n\n` +
+          `Note: You must use ${walletType}'s built-in browser, not Safari/Chrome.`
+        );
+        setIsLoading(false);
+        return;
+        
       } else {
-        // Desktop: Use wallet adapter
+        // Desktop: Use wallet adapter modal
         if (setVisible && typeof setVisible === 'function') {
           setShowWalletModal(false);
           setTimeout(() => {
@@ -1196,63 +1197,14 @@ const App: React.FC = () => {
       return (
         <>
           <LandingPage onOpenConnect={() => setShowWalletModal(true)} onGuest={handleEnterGuest} />
-          {/* Wallet Selection Modal for Landing Page */}
-          {showWalletModal && (
-            <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-                  <div className="glass-card w-full max-w-sm rounded-sm p-6 border border-border shadow-2xl">
-                      <div className="flex justify-between items-center mb-6">
-                      <h2 className="text-xl font-display font-bold uppercase">Connect Wallet</h2>
-                      <button onClick={() => setShowWalletModal(false)}><X className="text-gray-400 hover:text-white" /></button>
-                      </div>
-                      
-                      <div className="space-y-3">
-                        <p className="text-sm text-gray-400 text-center mb-4">
-                          {isMobile ? '📱 Tap to open wallet app' : '💻 Select your wallet'}
-                        </p>
-                        
-                        <button 
-                        onClick={() => handleConnectWallet('Phantom')}
-                        className="w-full bg-[#512DA8] hover:bg-[#5e35b1] p-4 rounded-sm flex items-center justify-between group transition-colors border border-white/5"
-                        >
-                        <div className="flex items-center gap-3">
-                            <img src="/logos/phantom.svg" alt="Phantom" className="w-10 h-10 rounded-full" />
-                            <div className="text-left">
-                              <div className="font-bold tracking-wide text-white">PHANTOM</div>
-                              <div className="text-xs text-white/60">{isMobile ? 'Mobile App' : 'Browser Extension'}</div>
-                            </div>
-                        </div>
-                        <ChevronRight className="w-5 h-5 text-white/60" />
-                        </button>
-
-                        <button 
-                        onClick={() => handleConnectWallet('Solflare')}
-                        className="w-full bg-surface hover:bg-surfaceHighlight p-4 rounded-sm flex items-center justify-between group transition-colors border border-border"
-                        >
-                        <div className="flex items-center gap-3">
-                            <img src="/logos/solflare.svg" alt="Solflare" className="w-10 h-10 rounded-full" />
-                            <div className="text-left">
-                              <div className="font-bold tracking-wide text-gray-300">SOLFLARE</div>
-                              <div className="text-xs text-gray-500">{isMobile ? 'Mobile App' : 'Browser Extension'}</div>
-                            </div>
-                        </div>
-                        <ChevronRight className="w-5 h-5 text-gray-500" />
-                        </button>
-                        
-                        {!isMobile && (
-                          <p className="text-xs text-gray-600 text-center mt-4">
-                            Requires browser extension
-                          </p>
-                        )}
-                        
-                        {isMobile && (
-                          <p className="text-xs text-gray-600 text-center mt-4">
-                            Will open your wallet app
-                          </p>
-                        )}
-                      </div>
-                  </div>
-            </div>
-          )}
+          <WalletModal
+            isOpen={showWalletModal}
+            isLoading={isLoading}
+            isMobile={isMobile}
+            onClose={() => setShowWalletModal(false)}
+            onSelectWallet={handleConnectWallet}
+            LoadingComponent={<LoadingState text="CONNECTING..." />}
+          />
         </>
       );
   }
@@ -1285,63 +1237,15 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Wallet Modal (In-App) - Centered */}
-      {showWalletModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-            {isLoading ? (
-              <div className="glass-panel w-full max-w-sm rounded-xl p-8 border border-sport/20 shadow-2xl animate-slide-up bg-[#09090b]">
-                <LoadingState text="CONNECTING..." />
-              </div>
-            ) : (
-                <div className="glass-card w-full max-w-sm rounded-sm p-6 border border-border shadow-2xl">
-                    <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-xl font-display font-bold uppercase">Connect Wallet</h2>
-                    <button onClick={() => setShowWalletModal(false)}><X className="text-gray-400 hover:text-white" /></button>
-                    </div>
-                    
-                    <div className="space-y-3">
-                        <p className="text-sm text-gray-400 text-center mb-4">
-                          {isMobile ? '📱 Tap to open wallet app' : '💻 Select your wallet'}
-                        </p>
-                        
-                        <button 
-                        onClick={() => handleConnectWallet('Phantom')}
-                        className="w-full bg-[#512DA8] hover:bg-[#5e35b1] p-4 rounded-sm flex items-center justify-between group transition-colors border border-white/5"
-                        >
-                        <div className="flex items-center gap-3">
-                            <img src="/logos/phantom.svg" alt="Phantom" className="w-10 h-10 rounded-full" />
-                            <div className="text-left">
-                              <div className="font-bold tracking-wide text-white">PHANTOM</div>
-                              <div className="text-xs text-white/60">{isMobile ? 'Mobile App' : 'Browser Extension'}</div>
-                            </div>
-                        </div>
-                        <ChevronRight className="w-5 h-5 text-white/60" />
-                        </button>
-
-                        <button 
-                        onClick={() => handleConnectWallet('Solflare')}
-                        className="w-full bg-surface hover:bg-surfaceHighlight p-4 rounded-sm flex items-center justify-between group transition-colors border border-border"
-                        >
-                        <div className="flex items-center gap-3">
-                            <img src="/logos/solflare.svg" alt="Solflare" className="w-10 h-10 rounded-full" />
-                            <div className="text-left">
-                              <div className="font-bold tracking-wide text-gray-300">SOLFLARE</div>
-                              <div className="text-xs text-gray-500">{isMobile ? 'Mobile App' : 'Browser Extension'}</div>
-                            </div>
-                        </div>
-                        <ChevronRight className="w-5 h-5 text-gray-500" />
-                        </button>
-                        
-                        {isMobile && (
-                          <p className="text-xs text-gray-600 text-center mt-4">
-                            📲 Will open your wallet app
-                          </p>
-                        )}
-                    </div>
-                </div>
-            )}
-        </div>
-      )}
+      {/* Wallet Modal (In-App) - Reusable Component */}
+      <WalletModal
+        isOpen={showWalletModal}
+        isLoading={isLoading}
+        isMobile={isMobile}
+        onClose={() => setShowWalletModal(false)}
+        onSelectWallet={handleConnectWallet}
+        LoadingComponent={<LoadingState text="CONNECTING..." />}
+      />
 
       {/* Wallet Details / Disconnect Modal - Centered */}
       {showWalletDetails && (
