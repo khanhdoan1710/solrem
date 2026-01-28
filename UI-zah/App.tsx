@@ -251,7 +251,7 @@ const LandingPage: React.FC<{ onOpenConnect: () => void; onGuest: () => void }> 
 
 const App: React.FC = () => {
   // Real Solana Wallet Integration
-  const { publicKey, disconnect, signTransaction } = useWallet();
+  const { publicKey, disconnect, signTransaction, connect: walletAdapterConnect, select } = useWallet();
   const { setVisible } = useWalletModal();
   const walletAddress = publicKey?.toBase58() || '';
   const walletConnected = !!publicKey;
@@ -449,8 +449,14 @@ const App: React.FC = () => {
         if (windowPhantom && windowPhantom.isPhantom) {
           console.log('✅ Phantom detected, connecting...');
           try {
-            const response = await windowPhantom.connect();
-            console.log('✅ Connected to Phantom:', response.publicKey.toString());
+            // First, select the wallet in wallet adapter
+            const phantomWalletName = 'Phantom';
+            select(phantomWalletName as any);
+            
+            // Then connect via wallet adapter (this will use the injected wallet)
+            await walletAdapterConnect();
+            
+            console.log('✅ Connected to Phantom via adapter');
             setShowWalletModal(false);
             setIsLoading(false);
             return;
@@ -493,8 +499,14 @@ const App: React.FC = () => {
         if (windowSolflare && windowSolflare.isSolflare) {
           console.log('✅ Solflare detected, connecting...');
           try {
-            await windowSolflare.connect();
-            console.log('✅ Connected to Solflare');
+            // First, select the wallet in wallet adapter
+            const solflareWalletName = 'Solflare';
+            select(solflareWalletName as any);
+            
+            // Then connect via wallet adapter
+            await walletAdapterConnect();
+            
+            console.log('✅ Connected to Solflare via adapter');
             setShowWalletModal(false);
             setIsLoading(false);
             return;
