@@ -319,6 +319,48 @@ const App: React.FC = () => {
     loadInitialData();
   }, []);
 
+  // Listen for direct wallet connection events (window.phantom/solflare)
+  useEffect(() => {
+    const handleAccountChange = (publicKey: any) => {
+      if (publicKey) {
+        console.log('🔄 Wallet account changed:', publicKey.toString());
+      } else {
+        console.log('👋 Wallet disconnected');
+        setIsOnboarding(true);
+      }
+    };
+
+    // Listen to Phantom events
+    const windowPhantom = (window as any).phantom?.solana;
+    if (windowPhantom) {
+      windowPhantom.on('accountChanged', handleAccountChange);
+      windowPhantom.on('disconnect', () => {
+        console.log('👋 Phantom disconnected');
+        setIsOnboarding(true);
+      });
+    }
+
+    // Listen to Solflare events
+    const windowSolflare = (window as any).solflare;
+    if (windowSolflare) {
+      windowSolflare.on('accountChanged', handleAccountChange);
+      windowSolflare.on('disconnect', () => {
+        console.log('👋 Solflare disconnected');
+        setIsOnboarding(true);
+      });
+    }
+
+    return () => {
+      // Cleanup listeners
+      if (windowPhantom) {
+        windowPhantom.removeAllListeners();
+      }
+      if (windowSolflare) {
+        windowSolflare.removeAllListeners();
+      }
+    };
+  }, []);
+
   // Load user-specific data when wallet connects
   // Load user data when wallet connects
   useEffect(() => {
@@ -402,59 +444,100 @@ const App: React.FC = () => {
       const windowPhantom = (window as any).phantom?.solana;
       const windowSolflare = (window as any).solflare;
       
-      if (isMobile) {
-        // Mobile strategy: Check if wallet is injected (user is in wallet's in-app browser)
-        if (walletType === 'Phantom' && windowPhantom && windowPhantom.isPhantom) {
-          console.log('✅ Phantom detected in mobile browser');
+      // Try to connect directly via injected wallet (works for both mobile & desktop)
+      if (walletType === 'Phantom') {
+        if (windowPhantom && windowPhantom.isPhantom) {
+          console.log('✅ Phantom detected, connecting...');
           try {
-            await windowPhantom.connect();
+            const response = await windowPhantom.connect();
+            console.log('✅ Connected to Phantom:', response.publicKey.toString());
             setShowWalletModal(false);
             setIsLoading(false);
             return;
-          } catch (err) {
+          } catch (err: any) {
             console.error('❌ Phantom connection failed:', err);
-          }
-        } else if (walletType === 'Solflare' && windowSolflare && windowSolflare.isSolflare) {
-          console.log('✅ Solflare detected in mobile browser');
-          try {
-            await windowSolflare.connect();
-            setShowWalletModal(false);
+            if (err.code === 4001) {
+              alert('❌ Connection rejected. Please try again.');
+            } else {
+              alert('❌ Failed to connect to Phantom. Please try again.');
+            }
             setIsLoading(false);
             return;
-          } catch (err) {
-            console.error('❌ Solflare connection failed:', err);
           }
-        }
-        
-        // If wallet not injected, show instructions to open in wallet browser
-        alert(
-          `📱 Mobile Instructions:\n\n` +
-          `1. Open ${walletType} app on your phone\n` +
-          `2. Go to the browser inside ${walletType}\n` +
-          `3. Visit: ${window.location.origin}\n` +
-          `4. Click "Connect Wallet" again\n\n` +
-          `Note: You must use ${walletType}'s built-in browser, not Safari/Chrome.`
-        );
-        setIsLoading(false);
-        return;
-        
-      } else {
-        // Desktop: Use wallet adapter modal
-        if (setVisible && typeof setVisible === 'function') {
-          setShowWalletModal(false);
-          setTimeout(() => {
-            setVisible(true);
-          }, 100);
+        } else {
+          // Phantom not installed
+          if (isMobile) {
+            alert(
+              '📱 Phantom Not Found!\n\n' +
+              '1. Install Phantom app from App Store/Play Store\n' +
+              '2. Open Phantom app\n' +
+              '3. Use browser inside Phantom\n' +
+              '4. Visit this site again'
+            );
+          } else {
+            const install = confirm(
+              '🦊 Phantom Extension Not Found!\n\n' +
+              'Install Phantom browser extension to continue.\n\n' +
+              'Click OK to visit Phantom.app'
+            );
+            if (install) {
+              window.open('https://phantom.app/download', '_blank');
+            }
+          }
+          setIsLoading(false);
+          return;
         }
       }
+      
+      if (walletType === 'Solflare') {
+        if (windowSolflare && windowSolflare.isSolflare) {
+          console.log('✅ Solflare detected, connecting...');
+          try {
+            await windowSolflare.connect();
+            console.log('✅ Connected to Solflare');
+            setShowWalletModal(false);
+            setIsLoading(false);
+            return;
+          } catch (err: any) {
+            console.error('❌ Solflare connection failed:', err);
+            if (err.code === 4001) {
+              alert('❌ Connection rejected. Please try again.');
+            } else {
+              alert('❌ Failed to connect to Solflare. Please try again.');
+            }
+            setIsLoading(false);
+            return;
+          }
+        } else {
+          // Solflare not installed
+          if (isMobile) {
+            alert(
+              '📱 Solflare Not Found!\n\n' +
+              '1. Install Solflare app from App Store/Play Store\n' +
+              '2. Open Solflare app\n' +
+              '3. Use browser inside Solflare\n' +
+              '4. Visit this site again'
+            );
+          } else {
+            const install = confirm(
+              '🔥 Solflare Extension Not Found!\n\n' +
+              'Install Solflare browser extension to continue.\n\n' +
+              'Click OK to visit Solflare.com'
+            );
+            if (install) {
+              window.open('https://solflare.com/download', '_blank');
+            }
+          }
+          setIsLoading(false);
+          return;
+        }
+      }
+      
     } catch (error) {
       console.error('❌ Wallet connection error:', error);
       alert('Failed to connect wallet. Please try again.');
-    } finally {
-      setTimeout(() => {
-        setIsLoading(false);
-        setShowWalletModal(false);
-      }, 3000);
+      setIsLoading(false);
+      setShowWalletModal(false);
     }
   };
 
