@@ -1,0 +1,5 @@
+{
+  "name": "SolREM",
+  "description": "A mobile-first sleep tracking and prediction markets app on Solana. Earn rewards for high REM sleep and bet on sleep outcomes.",
+  "requestFramePermissions": []
+}

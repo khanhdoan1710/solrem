@@ -1,0 +1,12 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect width="128" height="128" rx="64" fill="url(#paint0_linear_solflare)"/>
+<path d="M32 72L64 40L96 72L88 80L64 56L40 80L32 72Z" fill="white"/>
+<path d="M40 88L64 64L88 88L80 96L64 80L48 96L40 88Z" fill="white"/>
+<circle cx="64" cy="48" r="8" fill="white"/>
+<defs>
+<linearGradient id="paint0_linear_solflare" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
+<stop stop-color="#FC802D"/>
+<stop offset="1" stop-color="#FE4F3E"/>
+</linearGradient>
+</defs>
+</svg>
