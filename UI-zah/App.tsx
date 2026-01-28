@@ -51,6 +51,7 @@ import WalletModal from './components/WalletModal';
 import { generateSleepInsights } from './services/geminiService';
 import * as dataLoader from './services/dataLoader';
 import * as walletService from './services/walletService';
+import { authenticateWithWallet, signOutFromSupabase } from './services/supabaseClient';
 
 // --- Loading Component (Enhanced) ---
 const LoadingState: React.FC<{ text?: string }> = ({ text = "LOADING..." }) => (
@@ -374,6 +375,17 @@ const App: React.FC = () => {
         setDataLoading(true);
         
         try {
+          // Authenticate with Supabase first (required for RLS)
+          console.log('🔐 Authenticating with Supabase...');
+          const authenticated = await authenticateWithWallet(walletAddress);
+          
+          if (!authenticated) {
+            console.error('❌ Failed to authenticate with Supabase');
+            alert('Failed to authenticate. Please try again.');
+            setDataLoading(false);
+            return;
+          }
+          
           // Load user profile (creates new user if doesn't exist)
           console.log('📊 Loading user profile...');
           const profile = await dataLoader.getUserProfile(walletAddress);
@@ -555,6 +567,10 @@ const App: React.FC = () => {
 
   const handleDisconnect = async () => {
     try {
+      // Sign out from Supabase
+      await signOutFromSupabase();
+      
+      // Disconnect wallet
       await disconnect();
       setShowWalletDetails(false);
       setIsOnboarding(true);
