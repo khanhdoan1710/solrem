@@ -14,12 +14,14 @@ pub mod solrem_prediction_markets {
         description: String,
         end_time: i64,
         creator_stake: u64,
+        authority: Pubkey,  // Backend authority pubkey
     ) -> Result<()> {
         let market = &mut ctx.accounts.market;
         let clock = Clock::get()?;
 
         market.market_id = market_id;
         market.creator = ctx.accounts.creator.key();
+        market.authority = authority;
         market.description = description;
         market.end_time = end_time;
         market.creator_stake = creator_stake;
@@ -112,7 +114,12 @@ pub mod solrem_prediction_markets {
 
         require!(market.status == MarketStatus::Active, ErrorCode::MarketNotActive);
         require!(clock.unix_timestamp >= market.end_time, ErrorCode::MarketNotExpired);
-        require!(ctx.accounts.resolver.key() == market.creator, ErrorCode::UnauthorizedResolver);
+        
+        // Only backend authority can resolve
+        require!(
+            ctx.accounts.resolver.key() == market.authority,
+            ErrorCode::UnauthorizedResolver
+        );
 
         market.status = MarketStatus::Resolved;
         market.outcome = outcome;
@@ -303,6 +310,7 @@ pub struct ClaimWinnings<'info> {
 pub struct Market {
     pub market_id: u64,
     pub creator: Pubkey,
+    pub authority: Pubkey,  // Backend authority that can resolve
     pub description: String,
     pub end_time: i64,
     pub creator_stake: u64,
