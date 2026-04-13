@@ -76,3 +76,7 @@ yarn-error.log
 
 dev-docs
 AGENTS.md
+
+# Solana / Anchor build artifacts
+solana-program/target/
+solana-program/Cargo.lock

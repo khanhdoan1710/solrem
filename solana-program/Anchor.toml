@@ -2,11 +2,14 @@
 seeds = false
 skip-lint = false
 
+[toolchain]
+anchor_version = "0.29.0"
+
 [programs.devnet]
-solrem_prediction_markets = "SoLrEmPrEdIcTiOnMaRkEtS1111111111111111111"
+solrem_prediction_markets = "DPpLopPcTtciAXf8BNgC1sPzCpHsbedEttFrNysRsWf9"
 
 [programs.mainnet]
-solrem_prediction_markets = "SoLrEmPrEdIcTiOnMaRkEtS1111111111111111111"
+solrem_prediction_markets = "DPpLopPcTtciAXf8BNgC1sPzCpHsbedEttFrNysRsWf9"
 
 [registry]
 url = "https://api.apr.dev"

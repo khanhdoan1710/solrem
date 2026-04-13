@@ -3,7 +3,7 @@ const { Connection, PublicKey, Transaction } = require('@solana/web3.js');
 class SolanaService {
   constructor() {
     this.connection = new Connection('https://api.devnet.solana.com', 'confirmed');
-    this.programId = new PublicKey('SoLrEmPrEdIcTiOnMaRkEtS1111111111111111111');
+    this.programId = new PublicKey('DPpLopPcTtciAXf8BNgC1sPzCpHsbedEttFrNysRsWf9');
   }
 
   /**

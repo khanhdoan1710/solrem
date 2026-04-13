@@ -26,6 +26,7 @@ describe("solrem-prediction-markets", () => {
 
   // Test accounts
   let creator: Keypair;
+  let backendAuthority: Keypair;
   let bettor1: Keypair;
   let bettor2: Keypair;
   let mint: Keypair;
@@ -40,6 +41,7 @@ describe("solrem-prediction-markets", () => {
   before(async () => {
     // Create test keypairs
     creator = Keypair.generate();
+    backendAuthority = Keypair.generate();
     bettor1 = Keypair.generate();
     bettor2 = Keypair.generate();
     mint = Keypair.generate();
@@ -48,6 +50,7 @@ describe("solrem-prediction-markets", () => {
 
     // Airdrop SOL to test accounts
     await provider.connection.requestAirdrop(creator.publicKey, 2 * anchor.web3.LAMPORTS_PER_SOL);
+    await provider.connection.requestAirdrop(backendAuthority.publicKey, 2 * anchor.web3.LAMPORTS_PER_SOL);
     await provider.connection.requestAirdrop(bettor1.publicKey, 2 * anchor.web3.LAMPORTS_PER_SOL);
     await provider.connection.requestAirdrop(bettor2.publicKey, 2 * anchor.web3.LAMPORTS_PER_SOL);
 
@@ -157,13 +160,13 @@ describe("solrem-prediction-markets", () => {
         new anchor.BN(marketId),
         "Will I get 8+ hours of sleep tonight?",
         new anchor.BN(Math.floor(Date.now() / 1000) + 86400), // 24 hours from now
-        new anchor.BN(creatorStake),
-        creator.publicKey
+        new anchor.BN(creatorStake)
       )
       .accounts({
         market: marketPda,
         creatorBet: creatorBetPda,
         creator: creator.publicKey,
+        backendAuthority: backendAuthority.publicKey,
         creatorTokenAccount: await getAssociatedTokenAddress(mint.publicKey, creator.publicKey),
         marketTokenAccount: marketTokenAccount,
         mint: mint.publicKey,
@@ -171,7 +174,7 @@ describe("solrem-prediction-markets", () => {
         associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       })
-      .signers([creator])
+      .signers([creator, backendAuthority])
       .rpc();
 
     console.log("Market creation transaction:", tx);
@@ -264,9 +267,9 @@ describe("solrem-prediction-markets", () => {
       .resolveMarket({ yes: {} })
       .accounts({
         market: marketPda,
-        resolver: creator.publicKey,
+        resolver: backendAuthority.publicKey,
       })
-      .signers([creator])
+      .signers([backendAuthority])
       .rpc();
 
     console.log("Market resolution transaction:", tx);

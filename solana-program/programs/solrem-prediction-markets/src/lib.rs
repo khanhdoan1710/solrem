@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-declare_id!("SoLrEmPrEdIcTiOnMaRkEtS1111111111111111111");
+declare_id!("DPpLopPcTtciAXf8BNgC1sPzCpHsbedEttFrNysRsWf9");
 
 #[program]
 pub mod solrem_prediction_markets {
@@ -14,14 +14,13 @@ pub mod solrem_prediction_markets {
         description: String,
         end_time: i64,
         creator_stake: u64,
-        authority: Pubkey,  // Backend authority pubkey
     ) -> Result<()> {
         let market = &mut ctx.accounts.market;
         let clock = Clock::get()?;
 
         market.market_id = market_id;
         market.creator = ctx.accounts.creator.key();
-        market.authority = authority;
+        market.authority = ctx.accounts.backend_authority.key();
         market.description = description;
         market.end_time = end_time;
         market.creator_stake = creator_stake;
@@ -223,6 +222,11 @@ pub struct CreateMarket<'info> {
     
     #[account(mut)]
     pub creator: Signer<'info>,
+
+    #[account(
+        constraint = backend_authority.key() != creator.key() @ ErrorCode::InvalidBackendAuthority
+    )]
+    pub backend_authority: Signer<'info>,
     
     #[account(
         mut,
@@ -415,6 +419,8 @@ pub enum ErrorCode {
     MarketNotResolved,
     #[msg("Unauthorized resolver")]
     UnauthorizedResolver,
+    #[msg("Invalid backend authority")]
+    InvalidBackendAuthority,
     #[msg("Unauthorized claimer")]
     UnauthorizedClaimer,
 }
