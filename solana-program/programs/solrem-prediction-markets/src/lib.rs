@@ -26,11 +26,20 @@ pub mod solrem_prediction_markets {
         market.end_time = end_time;
         market.creator_stake = creator_stake;
         market.total_pool = creator_stake;
-        market.yes_pool = 0;
+        market.yes_pool = creator_stake;  // Creator auto-bets on YES
         market.no_pool = 0;
         market.status = MarketStatus::Active;
         market.created_at = clock.unix_timestamp;
         market.bump = ctx.bumps.market;
+
+        // Create creator's bet account (auto-bet YES)
+        let creator_bet = &mut ctx.accounts.creator_bet;
+        creator_bet.market = market.key();
+        creator_bet.bettor = ctx.accounts.creator.key();
+        creator_bet.amount = creator_stake;
+        creator_bet.direction = BetDirection::Yes;
+        creator_bet.created_at = clock.unix_timestamp;
+        creator_bet.bump = ctx.bumps.creator_bet;
 
         // Transfer creator's stake to the market
         let cpi_accounts = Transfer {
@@ -202,6 +211,15 @@ pub struct CreateMarket<'info> {
         bump
     )]
     pub market: Account<'info, Market>,
+    
+    #[account(
+        init,
+        payer = creator,
+        space = 8 + Bet::INIT_SPACE,
+        seeds = [b"bet", market.key().as_ref(), creator.key().as_ref()],
+        bump
+    )]
+    pub creator_bet: Account<'info, Bet>,
     
     #[account(mut)]
     pub creator: Signer<'info>,

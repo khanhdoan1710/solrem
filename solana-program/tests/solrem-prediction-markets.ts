@@ -5,7 +5,6 @@ import {
   PublicKey, 
   Keypair, 
   SystemProgram,
-  SYSVAR_RENT_PUBKEY 
 } from "@solana/web3.js";
 import { 
   TOKEN_PROGRAM_ID,
@@ -31,6 +30,12 @@ describe("solrem-prediction-markets", () => {
   let bettor2: Keypair;
   let mint: Keypair;
   let marketId: number;
+  let creatorStake: number;
+
+  const marketSeed = (id: number): Buffer => {
+    const bn = new anchor.BN(id);
+    return bn.toArrayLike(Buffer, "le", 8);
+  };
 
   before(async () => {
     // Create test keypairs
@@ -39,6 +44,7 @@ describe("solrem-prediction-markets", () => {
     bettor2 = Keypair.generate();
     mint = Keypair.generate();
     marketId = Math.floor(Math.random() * 1000000);
+    creatorStake = 100 * 10**6; // 100 tokens
 
     // Airdrop SOL to test accounts
     await provider.connection.requestAirdrop(creator.publicKey, 2 * anchor.web3.LAMPORTS_PER_SOL);
@@ -133,7 +139,11 @@ describe("solrem-prediction-markets", () => {
 
   it("Creates a prediction market", async () => {
     const [marketPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("market"), Buffer.from(marketId.toString().padStart(8, '0'))],
+      [Buffer.from("market"), marketSeed(marketId)],
+      program.programId
+    );
+    const [creatorBetPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("bet"), marketPda.toBuffer(), creator.publicKey.toBuffer()],
       program.programId
     );
 
@@ -142,17 +152,17 @@ describe("solrem-prediction-markets", () => {
       marketPda
     );
 
-    const creatorStake = 100 * 10**6; // 100 tokens
-
     const tx = await program.methods
       .createMarket(
         new anchor.BN(marketId),
         "Will I get 8+ hours of sleep tonight?",
         new anchor.BN(Math.floor(Date.now() / 1000) + 86400), // 24 hours from now
-        new anchor.BN(creatorStake)
+        new anchor.BN(creatorStake),
+        creator.publicKey
       )
       .accounts({
         market: marketPda,
+        creatorBet: creatorBetPda,
         creator: creator.publicKey,
         creatorTokenAccount: await getAssociatedTokenAddress(mint.publicKey, creator.publicKey),
         marketTokenAccount: marketTokenAccount,
@@ -177,7 +187,7 @@ describe("solrem-prediction-markets", () => {
 
   it("Places bets on the market", async () => {
     const [marketPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("market"), Buffer.from(marketId.toString().padStart(8, '0'))],
+      [Buffer.from("market"), marketSeed(marketId)],
       program.programId
     );
 
@@ -239,14 +249,14 @@ describe("solrem-prediction-markets", () => {
 
     // Verify market state
     const marketAccount = await program.account.market.fetch(marketPda);
-    expect(marketAccount.yesPool.toString()).to.equal(betAmount.toString());
+    expect(marketAccount.yesPool.toString()).to.equal((creatorStake + betAmount).toString());
     expect(marketAccount.noPool.toString()).to.equal(betAmount.toString());
-    expect(marketAccount.totalPool.toString()).to.equal((100 * 10**6 + 2 * betAmount).toString());
+    expect(marketAccount.totalPool.toString()).to.equal((creatorStake + 2 * betAmount).toString());
   });
 
   it("Resolves the market", async () => {
     const [marketPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("market"), Buffer.from(marketId.toString().padStart(8, '0'))],
+      [Buffer.from("market"), marketSeed(marketId)],
       program.programId
     );
 
@@ -269,7 +279,7 @@ describe("solrem-prediction-markets", () => {
 
   it("Claims winnings", async () => {
     const [marketPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("market"), Buffer.from(marketId.toString().padStart(8, '0'))],
+      [Buffer.from("market"), marketSeed(marketId)],
       program.programId
     );
 

@@ -17,6 +17,7 @@ Key features
 - Automatic market resolution service: see [`MarketResolutionService.resolveMarkets`](backend/services/marketResolution.js) and [backend/services/marketResolution.js](backend/services/marketResolution.js).
 - Mobile app screens: dashboard, markets, create market, market details — see [src/screens/DashboardScreen.tsx](src/screens/DashboardScreen.tsx), [src/screens/MarketsScreen.tsx](src/screens/MarketsScreen.tsx), [src/screens/CreateMarketScreen.tsx](src/screens/CreateMarketScreen.tsx), [src/screens/MarketDetailsScreen.tsx](src/screens/MarketDetailsScreen.tsx).
 - On-chain program (Anchor / Solana) that manages markets, bets and payouts: [solana-program/programs/solrem-prediction-markets/src/lib.rs](solana-program/programs/solrem-prediction-markets/src/lib.rs) (functions: `create_market`, `place_bet`, `resolve_market`, `claim_winnings`).
+- Creator stake model: `create_market` auto-creates a creator bet on YES, adds `creator_stake` to `yes_pool` and `total_pool`, and transfers stake tokens into the market vault.
 
 Getting started (local dev)
 1. Backend
@@ -62,6 +63,8 @@ Development notes
 - Scoring weights and formulas live in [backend/services/sleepScoring.js](backend/services/sleepScoring.js). Adjust weights or thresholds used in [`SleepScoringService.calculateSleepScore`](backend/services/sleepScoring.js) to tune behavior.
 - Market resolution logic is in [backend/services/marketResolution.js](backend/services/marketResolution.js). Unit-test edge cases for timezones and missing sleep data.
 - Front-end mock Solana methods (in [src/services/SolanaService.ts](src/services/SolanaService.ts)) emulate transactions — replace with real RPC / wallet integration for production.
+
+- Market creation requires the creator to hold enough tokens for `creator_stake`; the stake transfer happens on-chain at creation time.
 
 Testing
 - Backend: run unit/integration tests (see [backend/README.md](backend/README.md)).
