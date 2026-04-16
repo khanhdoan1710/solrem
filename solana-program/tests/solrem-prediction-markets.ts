@@ -41,7 +41,12 @@ describe("solrem-prediction-markets", () => {
   before(async () => {
     // Create test keypairs
     creator = Keypair.generate();
-    backendAuthority = Keypair.generate();
+    backendAuthority = Keypair.fromSeed(Uint8Array.from([
+      0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07,
+      0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07,
+      0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07,
+      0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07,
+    ]));
     bettor1 = Keypair.generate();
     bettor2 = Keypair.generate();
     mint = Keypair.generate();
@@ -166,7 +171,6 @@ describe("solrem-prediction-markets", () => {
         market: marketPda,
         creatorBet: creatorBetPda,
         creator: creator.publicKey,
-        backendAuthority: backendAuthority.publicKey,
         creatorTokenAccount: await getAssociatedTokenAddress(mint.publicKey, creator.publicKey),
         marketTokenAccount: marketTokenAccount,
         mint: mint.publicKey,
@@ -174,7 +178,7 @@ describe("solrem-prediction-markets", () => {
         associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       })
-      .signers([creator, backendAuthority])
+      .signers([creator])
       .rpc();
 
     console.log("Market creation transaction:", tx);

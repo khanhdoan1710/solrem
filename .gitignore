@@ -76,7 +76,7 @@ yarn-error.log
 
 dev-docs
 AGENTS.md
-
+.codex/
 # Solana / Anchor build artifacts
 solana-program/target/
 solana-program/Cargo.lock
