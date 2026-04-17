@@ -19,6 +19,7 @@ Key features
 - On-chain program (Anchor / Solana) that manages markets, bets and payouts: [solana-program/programs/solrem-prediction-markets/src/lib.rs](solana-program/programs/solrem-prediction-markets/src/lib.rs) (functions: `create_market`, `place_bet`, `resolve_market`, `claim_winnings`).
 - Hardcoded backend authority model: `resolve_market` checks against a fixed backend pubkey in the program, so market state does not need a per-market authority snapshot.
 - Creator stake model: `create_market` auto-creates a creator bet on YES, adds `creator_stake` to `yes_pool` and `total_pool`, and transfers stake tokens into the market vault.
+- Claim flow: `claim_winnings` closes the `bet` account after payout so the same bet cannot be claimed twice and the rent is returned to the claimant.
 
 Getting started (local dev)
 1. Backend

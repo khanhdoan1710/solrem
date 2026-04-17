@@ -77,6 +77,7 @@ pub mod solrem_prediction_markets {
         bet_direction: BetDirection,
     ) -> Result<()> {
         let clock = Clock::get()?;
+        let market = &mut ctx.accounts.market;
 
         require!(market.status == MarketStatus::Active, ErrorCode::MarketNotActive);
         require!(clock.unix_timestamp < market.end_time, ErrorCode::MarketExpired);
@@ -89,7 +90,6 @@ pub mod solrem_prediction_markets {
         bet.created_at = clock.unix_timestamp;
         bet.bump = ctx.bumps.bet;
 
-        let market = &mut ctx.accounts.market;
         match bet_direction {
             BetDirection::Yes => {
                 market.yes_pool += bet_amount;
@@ -135,7 +135,16 @@ pub mod solrem_prediction_markets {
             ErrorCode::UnauthorizedResolver
         );
 
-        market.status = MarketStatus::Resolved;
+        let winning_pool = match outcome {
+            MarketOutcome::Yes => market.yes_pool,
+            MarketOutcome::No => market.no_pool,
+        };
+
+        market.status = if winning_pool == 0 {
+            MarketStatus::Refund
+        } else {
+            MarketStatus::Resolved
+        };
         market.outcome = Some(outcome);
         
         market.resolved_at = Some(clock.unix_timestamp);
@@ -154,7 +163,10 @@ pub mod solrem_prediction_markets {
         let market = &ctx.accounts.market;
         let bet = &ctx.accounts.bet;
 
-        require!(market.status == MarketStatus::Resolved, ErrorCode::MarketNotResolved);
+        require!(
+            market.status == MarketStatus::Resolved || market.status == MarketStatus::Refund,
+            ErrorCode::MarketNotResolved
+        );
         require!(bet.bettor == ctx.accounts.bettor.key(), ErrorCode::UnauthorizedClaimer);
 
         let outcome = match &market.outcome {
@@ -162,18 +174,22 @@ pub mod solrem_prediction_markets {
             None => return err!(ErrorCode::MarketNotResolved),
         };
 
-        let total_winning_bets = match outcome {
-            MarketOutcome::Yes => market.yes_pool,
-            MarketOutcome::No => market.no_pool,
-        };
-
-        let winnings = if total_winning_bets > 0
-            && ((outcome == &MarketOutcome::Yes && bet.direction == BetDirection::Yes)
-                || (outcome == &MarketOutcome::No && bet.direction == BetDirection::No))
-        {
-            (bet.amount * market.total_pool) / total_winning_bets
+        let winnings = if market.status == MarketStatus::Refund {
+            bet.amount
         } else {
-            0
+            let total_winning_bets = match outcome {
+                MarketOutcome::Yes => market.yes_pool,
+                MarketOutcome::No => market.no_pool,
+            };
+
+            if total_winning_bets > 0
+                && ((outcome == &MarketOutcome::Yes && bet.direction == BetDirection::Yes)
+                    || (outcome == &MarketOutcome::No && bet.direction == BetDirection::No))
+            {
+                (bet.amount * market.total_pool) / total_winning_bets
+            } else {
+                0
+            }
         };
 
         if winnings > 0 {
@@ -301,7 +317,8 @@ pub struct ClaimWinnings<'info> {
     #[account(
         mut,
         seeds = [b"bet", market.key().as_ref(), bettor.key().as_ref()],
-        bump = bet.bump
+        bump = bet.bump,
+        close = bettor
     )]
     pub bet: Account<'info, Bet>,
 
@@ -361,6 +378,7 @@ pub struct Bet {
 pub enum MarketStatus {
     Active,
     Resolved,
+    Refund,
     Cancelled,
 }
 

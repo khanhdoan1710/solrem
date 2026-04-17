@@ -42,10 +42,10 @@ describe("solrem-prediction-markets", () => {
     // Create test keypairs
     creator = Keypair.generate();
     backendAuthority = Keypair.fromSeed(Uint8Array.from([
-      0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07,
-      0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07,
-      0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07,
-      0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07,
+      0xab, 0xed, 0xce, 0x92, 0x46, 0xf7, 0xc1, 0x3b,
+      0x0e, 0x3e, 0x95, 0x1e, 0xde, 0x1f, 0x5d, 0x33,
+      0x74, 0x3f, 0x59, 0x55, 0x49, 0xca, 0x40, 0xa1,
+      0xfb, 0x66, 0x17, 0x58, 0x8f, 0xe8, 0x22, 0x74,
     ]));
     bettor1 = Keypair.generate();
     bettor2 = Keypair.generate();
@@ -312,9 +312,92 @@ describe("solrem-prediction-markets", () => {
 
     console.log("Claim winnings transaction:", tx);
 
-    // Verify bet was processed
-    const betAccount = await program.account.bet.fetch(betPda);
-    expect(betAccount.bettor.toString()).to.equal(bettor1.publicKey.toString());
-    expect(betAccount.direction).to.deep.equal({ yes: {} });
+    // Verify bet account was closed after claim
+    let betClosed = false;
+    try {
+      await program.account.bet.fetch(betPda);
+    } catch (_error) {
+      betClosed = true;
+    }
+    expect(betClosed).to.equal(true);
+  });
+
+  it("Refunds all bets when the resolved outcome has no bettors", async () => {
+    const refundMarketId = marketId + 1;
+    const [marketPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("market"), marketSeed(refundMarketId)],
+      program.programId
+    );
+    const [creatorBetPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("bet"), marketPda.toBuffer(), creator.publicKey.toBuffer()],
+      program.programId
+    );
+
+    const creatorTokenAccount = await getAssociatedTokenAddress(
+      mint.publicKey,
+      creator.publicKey
+    );
+    const marketTokenAccount = await getAssociatedTokenAddress(
+      mint.publicKey,
+      marketPda
+    );
+
+    await program.methods
+      .createMarket(
+        new anchor.BN(refundMarketId),
+        "Will I miss my sleep goal tonight?",
+        new anchor.BN(Math.floor(Date.now() / 1000) - 10),
+        new anchor.BN(creatorStake)
+      )
+      .accounts({
+        market: marketPda,
+        creatorBet: creatorBetPda,
+        creator: creator.publicKey,
+        creatorTokenAccount,
+        marketTokenAccount,
+        mint: mint.publicKey,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([creator])
+      .rpc();
+
+    await program.methods
+      .resolveMarket({ no: {} })
+      .accounts({
+        market: marketPda,
+        resolver: backendAuthority.publicKey,
+      })
+      .signers([backendAuthority])
+      .rpc();
+
+    const resolvedMarket = await program.account.market.fetch(marketPda);
+    expect(resolvedMarket.status).to.deep.equal({ refund: {} });
+    expect(resolvedMarket.outcome).to.deep.equal({ no: {} });
+
+    const balanceBeforeRefund = BigInt(
+      (await provider.connection.getTokenAccountBalance(creatorTokenAccount)).value.amount
+    );
+
+    await program.methods
+      .claimWinnings()
+      .accounts({
+        market: marketPda,
+        bet: creatorBetPda,
+        bettor: creator.publicKey,
+        bettorTokenAccount: creatorTokenAccount,
+        marketTokenAccount,
+        mint: mint.publicKey,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
+      })
+      .signers([creator])
+      .rpc();
+
+    const balanceAfterRefund = BigInt(
+      (await provider.connection.getTokenAccountBalance(creatorTokenAccount)).value.amount
+    );
+    expect(balanceAfterRefund - balanceBeforeRefund).to.equal(BigInt(creatorStake));
   });
 });
