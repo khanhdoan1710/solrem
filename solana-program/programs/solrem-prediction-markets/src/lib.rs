@@ -26,6 +26,10 @@ pub mod solrem_prediction_markets {
         let market = &mut ctx.accounts.market;
         let clock = Clock::get()?;
 
+        require!(end_time > clock.unix_timestamp, ErrorCode::MarketEndTimeInPast);
+        require!(creator_stake > 0, ErrorCode::InvalidCreatorStake);
+        require!(description.as_bytes().len() <= 200, ErrorCode::DescriptionTooLong);
+
         market.market_id = market_id;
         market.creator = ctx.accounts.creator.key();
         market.description = description;
@@ -431,6 +435,12 @@ pub enum ErrorCode {
     MarketNotActive,
     #[msg("Market has expired")]
     MarketExpired,
+    #[msg("Market end time must be in the future")]
+    MarketEndTimeInPast,
+    #[msg("Creator stake must be greater than zero")]
+    InvalidCreatorStake,
+    #[msg("Description is too long")]
+    DescriptionTooLong,
     #[msg("Market has not expired yet")]
     MarketNotExpired,
     #[msg("Market is not resolved")]

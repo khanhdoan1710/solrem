@@ -38,6 +38,18 @@ describe("solrem-prediction-markets", () => {
     return bn.toArrayLike(Buffer, "le", 8);
   };
 
+  const expectTxToFailWith = async (action: Promise<unknown>, message: string) => {
+    let failed = false;
+    try {
+      await action;
+    } catch (error) {
+      failed = true;
+      expect(String(error)).to.include(message);
+    }
+
+    expect(failed).to.equal(true);
+  };
+
   before(async () => {
     // Create test keypairs
     creator = Keypair.generate();
@@ -190,6 +202,116 @@ describe("solrem-prediction-markets", () => {
     expect(marketAccount.description).to.equal("Will I get 8+ hours of sleep tonight?");
     expect(marketAccount.creatorStake.toString()).to.equal(creatorStake.toString());
     expect(marketAccount.totalPool.toString()).to.equal(creatorStake.toString());
+  });
+
+  it("Rejects markets with an end time in the past", async () => {
+    const invalidMarketId = marketId + 101;
+    const [marketPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("market"), marketSeed(invalidMarketId)],
+      program.programId
+    );
+    const [creatorBetPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("bet"), marketPda.toBuffer(), creator.publicKey.toBuffer()],
+      program.programId
+    );
+
+    await expectTxToFailWith(
+      program.methods
+        .createMarket(
+          new anchor.BN(invalidMarketId),
+          "Will I get 8+ hours of sleep tonight?",
+          new anchor.BN(Math.floor(Date.now() / 1000) - 10),
+          new anchor.BN(creatorStake)
+        )
+        .accounts({
+          market: marketPda,
+          creatorBet: creatorBetPda,
+          creator: creator.publicKey,
+          creatorTokenAccount: await getAssociatedTokenAddress(mint.publicKey, creator.publicKey),
+          marketTokenAccount: await getAssociatedTokenAddress(mint.publicKey, marketPda),
+          mint: mint.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([creator])
+        .rpc(),
+      "Market end time must be in the future"
+    );
+  });
+
+  it("Rejects zero creator stake", async () => {
+    const invalidMarketId = marketId + 102;
+    const [marketPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("market"), marketSeed(invalidMarketId)],
+      program.programId
+    );
+    const [creatorBetPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("bet"), marketPda.toBuffer(), creator.publicKey.toBuffer()],
+      program.programId
+    );
+
+    await expectTxToFailWith(
+      program.methods
+        .createMarket(
+          new anchor.BN(invalidMarketId),
+          "Will I get 8+ hours of sleep tonight?",
+          new anchor.BN(Math.floor(Date.now() / 1000) + 86400),
+          new anchor.BN(0)
+        )
+        .accounts({
+          market: marketPda,
+          creatorBet: creatorBetPda,
+          creator: creator.publicKey,
+          creatorTokenAccount: await getAssociatedTokenAddress(mint.publicKey, creator.publicKey),
+          marketTokenAccount: await getAssociatedTokenAddress(mint.publicKey, marketPda),
+          mint: mint.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([creator])
+        .rpc(),
+      "Creator stake must be greater than zero"
+    );
+  });
+
+  it("Rejects descriptions longer than 200 characters", async () => {
+    const invalidMarketId = marketId + 103;
+    const [marketPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("market"), marketSeed(invalidMarketId)],
+      program.programId
+    );
+    const [creatorBetPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("bet"), marketPda.toBuffer(), creator.publicKey.toBuffer()],
+      program.programId
+    );
+
+    const longDescription = "a".repeat(201);
+
+    await expectTxToFailWith(
+      program.methods
+        .createMarket(
+          new anchor.BN(invalidMarketId),
+          longDescription,
+          new anchor.BN(Math.floor(Date.now() / 1000) + 86400),
+          new anchor.BN(creatorStake)
+        )
+        .accounts({
+          market: marketPda,
+          creatorBet: creatorBetPda,
+          creator: creator.publicKey,
+          creatorTokenAccount: await getAssociatedTokenAddress(mint.publicKey, creator.publicKey),
+          marketTokenAccount: await getAssociatedTokenAddress(mint.publicKey, marketPda),
+          mint: mint.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([creator])
+        .rpc(),
+      "Description is too long"
+    );
   });
 
   it("Places bets on the market", async () => {
