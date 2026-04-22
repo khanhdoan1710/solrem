@@ -83,12 +83,13 @@ const marketSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['active', 'resolved', 'cancelled'],
+      enum: ['active', 'resolved', 'refund', 'cancelled'],
       default: 'active',
       index: true
     },
     outcome: {
       type: String,
+      enum: ['yes', 'no', null],
       default: null
     },
     resolutionSource: {
@@ -108,5 +109,7 @@ const marketSchema = new mongoose.Schema(
     timestamps: true
   }
 );
+
+marketSchema.index({ marketId: 1, marketPda: 1 });
 
 module.exports = mongoose.model('Market', marketSchema);

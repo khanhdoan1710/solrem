@@ -23,27 +23,28 @@ describe('marketResolutionService', () => {
 
   it('rejects manual resolution before the market expires', async () => {
     Market.findOne.mockResolvedValue({
-      marketId: 'market_123',
+      marketId: '123',
       status: 'active',
       endTime: new Date(Date.now() + 60 * 1000)
     });
 
     await expect(
-      marketResolutionService.resolveMarketManually('market_123', 'yes')
+      marketResolutionService.resolveMarketManually('123', 'yes')
     ).rejects.toThrow('Market has not expired yet');
   });
 
-  it('updates market status with resolution metadata', async () => {
+  it('marks a market as resolved when the winning pool has bettors', async () => {
     const resolvedAtBeforeCall = new Date();
-    Market.findOneAndUpdate.mockResolvedValue({ marketId: 'market_123', outcome: 'yes' });
+    Market.findOneAndUpdate.mockResolvedValue({ marketId: '123', outcome: 'yes', status: 'resolved' });
 
-    await marketResolutionService.updateMarketStatus('market_123', 'yes', {
+    await marketResolutionService.updateMarketStatus('123', 'yes', {
+      status: 'resolved',
       resolutionSource: 'manual',
       resolutionTxId: 'resolve_tx_123'
     });
 
     expect(Market.findOneAndUpdate).toHaveBeenCalledWith(
-      { marketId: 'market_123' },
+      { marketId: '123' },
       expect.objectContaining({
         status: 'resolved',
         outcome: 'yes',
@@ -58,6 +59,18 @@ describe('marketResolutionService', () => {
     expect(updatePayload.resolvedAt.getTime()).toBeGreaterThanOrEqual(
       resolvedAtBeforeCall.getTime()
     );
+  });
+
+  it('marks a market as refund when the resolved side has no bettors', () => {
+    const status = marketResolutionService.getResolutionStatus(
+      {
+        yesPool: 100,
+        noPool: 0
+      },
+      'no'
+    );
+
+    expect(status).toBe('refund');
   });
 
   it('returns no when rem percentage cannot be computed', () => {

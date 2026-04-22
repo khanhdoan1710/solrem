@@ -25,10 +25,13 @@ class SolanaService {
    * Resolve a prediction market with backend authority.
    * This remains a stub until backend signer wiring is implemented.
    */
-  async resolveMarket(marketId, outcome) {
+  async resolveMarket(marketReference) {
     try {
+      const { marketId, marketPda, outcome } = marketReference;
+
       console.log('Resolving market on Solana with backend authority:', {
         marketId,
+        marketPda,
         outcome
       });
 

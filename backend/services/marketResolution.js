@@ -89,14 +89,21 @@ class MarketResolutionService {
   }
 
   async finalizeResolution(market, outcome, metadata = {}) {
-    const txId = await this.resolveMarketOnBlockchain(market.marketId, outcome);
+    const resolutionStatus = this.getResolutionStatus(market, outcome);
+    const txId = await this.resolveMarketOnBlockchain(market, outcome);
     const resolvedMarket = await this.updateMarketStatus(market.marketId, outcome, {
+      status: resolutionStatus,
       resolutionSource: metadata.resolutionSource || 'sleep-record',
       resolutionTxId: txId
     });
 
-    console.log(`Market ${market.marketId} resolved as: ${outcome}`);
+    console.log(`Market ${market.marketId} resolved as: ${outcome} with status ${resolutionStatus}`);
     return resolvedMarket;
+  }
+
+  getResolutionStatus(market, outcome) {
+    const winningPool = outcome === 'yes' ? market.yesPool : market.noPool;
+    return winningPool > 0 ? 'resolved' : 'refund';
   }
 
   /**
@@ -209,9 +216,13 @@ class MarketResolutionService {
   /**
    * Resolve market on blockchain with backend authority.
    */
-  async resolveMarketOnBlockchain(marketId, outcome) {
+  async resolveMarketOnBlockchain(market, outcome) {
     try {
-      return await solanaService.resolveMarket(marketId, outcome);
+      return await solanaService.resolveMarket({
+        marketId: market.marketId,
+        marketPda: market.marketPda || null,
+        outcome
+      });
     } catch (error) {
       console.error('Error resolving market on blockchain:', error);
       throw error;
@@ -226,7 +237,7 @@ class MarketResolutionService {
       return await Market.findOneAndUpdate(
         { marketId },
         {
-          status: 'resolved',
+          status: metadata.status || 'resolved',
           outcome,
           resolutionSource: metadata.resolutionSource || 'sleep-record',
           resolutionTxId: metadata.resolutionTxId || null,
@@ -246,7 +257,7 @@ class MarketResolutionService {
   async getResolutionHistory(limit = 50) {
     try {
       return await Market.find({
-        status: 'resolved'
+        status: { $in: ['resolved', 'refund'] }
       })
         .sort({ resolvedAt: -1, updatedAt: -1 })
         .limit(limit)
