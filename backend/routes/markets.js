@@ -9,6 +9,7 @@ const router = express.Router();
 const DEFAULT_MINT_ADDRESS = 'So11111111111111111111111111111111111111112';
 const VALID_OUTCOMES = new Set(['yes', 'no']);
 const VALID_BET_DIRECTIONS = new Set(['yes', 'no']);
+const RESOLVED_MARKET_STATUSES = ['resolved', 'refund'];
 const U64_STRING_PATTERN = /^\d+$/;
 
 function parsePositiveInteger(value, fallback) {
@@ -33,6 +34,10 @@ function normalizeDirection(value) {
 
 function validateMarketIdentifier(marketId) {
   return typeof marketId === 'string' && U64_STRING_PATTERN.test(marketId);
+}
+
+function calculateClaimStatus(market) {
+  return market.status === 'refund' ? 'refunded' : 'settled';
 }
 
 // Get all active prediction markets
@@ -295,6 +300,7 @@ router.post('/bet', async (req, res) => {
     const existingBet = await Bet.findOne({
       $or: [
         { txSignature },
+        { claimTxSignature: txSignature },
         { marketId: normalizedMarketId, walletAddress }
       ]
     }).lean();
@@ -347,6 +353,99 @@ router.post('/bet', async (req, res) => {
     }
 
     sendError(res, 500, 'Failed to persist bet');
+  }
+});
+
+// Mirror claim state after the client has claimed on-chain.
+router.post('/claim', async (req, res) => {
+  try {
+    const {
+      userId,
+      walletAddress,
+      marketId,
+      claimTxSignature,
+      payoutAmount
+    } = req.body;
+
+    const normalizedMarketId = String(marketId || '').trim();
+    const normalizedPayoutAmount = Number(payoutAmount);
+    const requiredFields = [
+      ['userId', userId],
+      ['walletAddress', walletAddress],
+      ['marketId', normalizedMarketId],
+      ['claimTxSignature', claimTxSignature],
+      ['payoutAmount', payoutAmount]
+    ];
+
+    const missingFields = requiredFields
+      .filter(([, value]) => hasMissingValue(value))
+      .map(([field]) => field);
+
+    if (missingFields.length > 0) {
+      return sendError(
+        res,
+        400,
+        `Missing required fields: ${missingFields.join(', ')}`
+      );
+    }
+
+    if (!validateMarketIdentifier(normalizedMarketId)) {
+      return sendError(res, 400, 'marketId must be a numeric string compatible with u64');
+    }
+
+    if (Number.isNaN(normalizedPayoutAmount) || normalizedPayoutAmount < 0) {
+      return sendError(res, 400, 'payoutAmount must be a non-negative number');
+    }
+
+    const market = await Market.findOne({
+      marketId: normalizedMarketId,
+      status: { $in: RESOLVED_MARKET_STATUSES }
+    }).lean();
+
+    if (!market) {
+      return sendError(res, 404, 'Resolved market not found');
+    }
+
+    const bet = await Bet.findOne({
+      marketId: normalizedMarketId,
+      walletAddress,
+      userId
+    });
+
+    if (!bet) {
+      return sendError(res, 404, 'Mirrored bet not found');
+    }
+
+    if (bet.claimedAt) {
+      return res.json({
+        success: true,
+        data: {
+          bet,
+          alreadyPersisted: true
+        }
+      });
+    }
+
+    bet.status = calculateClaimStatus(market);
+    bet.claimTxSignature = claimTxSignature;
+    bet.payoutAmount = normalizedPayoutAmount;
+    bet.claimedAt = new Date();
+    await bet.save();
+
+    res.json({
+      success: true,
+      data: {
+        bet
+      }
+    });
+  } catch (error) {
+    console.error('Claim persistence error:', error);
+
+    if (error.code === 11000) {
+      return sendError(res, 409, 'Claim transaction has already been mirrored');
+    }
+
+    sendError(res, 500, 'Failed to persist claim state');
   }
 });
 

@@ -14,6 +14,12 @@ const betSchema = new mongoose.Schema(
       sparse: true,
       index: true
     },
+    claimTxSignature: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true
+    },
     userId: {
       type: String,
       required: true,
@@ -52,7 +58,7 @@ const betSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['registered', 'cancelled', 'settled'],
+      enum: ['registered', 'cancelled', 'settled', 'refunded'],
       default: 'registered',
       index: true
     },
