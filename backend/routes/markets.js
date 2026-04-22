@@ -9,6 +9,7 @@ const router = express.Router();
 const DEFAULT_MINT_ADDRESS = 'So11111111111111111111111111111111111111112';
 const VALID_OUTCOMES = new Set(['yes', 'no']);
 const VALID_BET_DIRECTIONS = new Set(['yes', 'no']);
+const U64_STRING_PATTERN = /^\d+$/;
 
 function parsePositiveInteger(value, fallback) {
   const parsed = parseInt(value, 10);
@@ -20,6 +21,18 @@ function sendError(res, status, error) {
     success: false,
     error
   });
+}
+
+function hasMissingValue(value) {
+  return value === undefined || value === null || value === '';
+}
+
+function normalizeDirection(value) {
+  return typeof value === 'string' ? value.toLowerCase() : '';
+}
+
+function validateMarketIdentifier(marketId) {
+  return typeof marketId === 'string' && U64_STRING_PATTERN.test(marketId);
 }
 
 // Get all active prediction markets
@@ -82,7 +95,8 @@ router.get('/history/resolved', async (req, res) => {
   }
 });
 
-// Persist a market after the client has created it on-chain
+// Persist a market after the client has created it on-chain.
+// This also mirrors the creator's automatic YES bet from the contract.
 router.post('/create', async (req, res) => {
   try {
     const {
@@ -100,19 +114,22 @@ router.post('/create', async (req, res) => {
     } = req.body;
 
     const normalizedCreatorStake = Number(creatorStake);
+    const normalizedMarketId = String(marketId || '').trim();
+    const normalizedDescription = typeof description === 'string' ? description.trim() : '';
     const requiredFields = [
       ['userId', userId],
       ['creatorWallet', creatorWallet],
-      ['marketId', marketId],
+      ['marketId', normalizedMarketId],
+      ['marketPda', marketPda],
       ['txSignature', txSignature],
-      ['description', description],
+      ['description', normalizedDescription],
       ['marketType', marketType],
       ['targetValue', targetValue],
       ['endTime', endTime]
     ];
 
     const missingFields = requiredFields
-      .filter(([, value]) => value === undefined || value === null || value === '')
+      .filter(([, value]) => hasMissingValue(value))
       .map(([field]) => field);
 
     if (missingFields.length > 0) {
@@ -123,8 +140,16 @@ router.post('/create', async (req, res) => {
       );
     }
 
-    if (Number.isNaN(normalizedCreatorStake) || normalizedCreatorStake < 0) {
-      return sendError(res, 400, 'creatorStake must be a non-negative number');
+    if (!validateMarketIdentifier(normalizedMarketId)) {
+      return sendError(res, 400, 'marketId must be a numeric string compatible with u64');
+    }
+
+    if (normalizedDescription.length > 200) {
+      return sendError(res, 400, 'description must be 200 characters or fewer');
+    }
+
+    if (Number.isNaN(normalizedCreatorStake) || normalizedCreatorStake <= 0) {
+      return sendError(res, 400, 'creatorStake must be greater than zero');
     }
 
     const parsedEndTime = new Date(endTime);
@@ -132,9 +157,14 @@ router.post('/create', async (req, res) => {
       return sendError(res, 400, 'endTime must be a valid date');
     }
 
+    if (parsedEndTime <= new Date()) {
+      return sendError(res, 400, 'endTime must be in the future');
+    }
+
     const existingMarket = await Market.findOne({
       $or: [
-        { marketId },
+        { marketId: normalizedMarketId },
+        { marketPda },
         { txSignature }
       ]
     }).lean();
@@ -150,12 +180,12 @@ router.post('/create', async (req, res) => {
     }
 
     const market = await Market.create({
-      marketId,
-      marketPda: marketPda || undefined,
+      marketId: normalizedMarketId,
+      marketPda,
       txSignature,
       creatorUserId: userId,
       creatorWallet,
-      description,
+      description: normalizedDescription,
       marketType,
       targetValue,
       endTime: parsedEndTime,
@@ -167,19 +197,38 @@ router.post('/create', async (req, res) => {
       status: 'active'
     });
 
+    const creatorBet = await Bet.create({
+      betId: uuidv4(),
+      txSignature,
+      userId,
+      walletAddress: creatorWallet,
+      marketId: normalizedMarketId,
+      marketPda,
+      betAmount: normalizedCreatorStake,
+      betDirection: 'yes',
+      mintAddress: mintAddress || DEFAULT_MINT_ADDRESS,
+      status: 'registered'
+    });
+
     res.status(201).json({
       success: true,
       data: {
-        market
+        market,
+        creatorBet
       }
     });
   } catch (error) {
     console.error('Market persistence error:', error);
+
+    if (error.code === 11000) {
+      return sendError(res, 409, 'Market or creator bet has already been mirrored');
+    }
+
     sendError(res, 500, 'Failed to persist prediction market');
   }
 });
 
-// Persist a bet after the client has placed it on-chain
+// Persist a bet after the client has placed it on-chain.
 router.post('/bet', async (req, res) => {
   try {
     const {
@@ -195,18 +244,19 @@ router.post('/bet', async (req, res) => {
     } = req.body;
 
     const normalizedBetAmount = Number(betAmount);
-    const direction = typeof betDirection === 'string' ? betDirection.toLowerCase() : '';
+    const normalizedMarketId = String(marketId || '').trim();
+    const direction = normalizeDirection(betDirection);
     const requiredFields = [
       ['userId', userId],
       ['walletAddress', walletAddress],
-      ['marketId', marketId],
+      ['marketId', normalizedMarketId],
       ['txSignature', txSignature],
       ['betAmount', betAmount],
       ['betDirection', betDirection]
     ];
 
     const missingFields = requiredFields
-      .filter(([, value]) => value === undefined || value === null || value === '')
+      .filter(([, value]) => hasMissingValue(value))
       .map(([field]) => field);
 
     if (missingFields.length > 0) {
@@ -217,6 +267,10 @@ router.post('/bet', async (req, res) => {
       );
     }
 
+    if (!validateMarketIdentifier(normalizedMarketId)) {
+      return sendError(res, 400, 'marketId must be a numeric string compatible with u64');
+    }
+
     if (Number.isNaN(normalizedBetAmount) || normalizedBetAmount <= 0) {
       return sendError(res, 400, 'betAmount must be a positive number');
     }
@@ -225,7 +279,7 @@ router.post('/bet', async (req, res) => {
       return sendError(res, 400, 'betDirection must be yes or no');
     }
 
-    const market = await Market.findOne({ marketId });
+    const market = await Market.findOne({ marketId: normalizedMarketId });
     if (!market) {
       return sendError(res, 404, 'Market not found');
     }
@@ -234,10 +288,14 @@ router.post('/bet', async (req, res) => {
       return sendError(res, 400, 'Market is no longer active');
     }
 
+    if (marketPda && market.marketPda && marketPda !== market.marketPda) {
+      return sendError(res, 400, 'marketPda does not match the stored market');
+    }
+
     const existingBet = await Bet.findOne({
       $or: [
         { txSignature },
-        { betId: betId || '__missing_bet_id__' }
+        { marketId: normalizedMarketId, walletAddress }
       ]
     }).lean();
 
@@ -256,8 +314,8 @@ router.post('/bet', async (req, res) => {
       txSignature,
       userId,
       walletAddress,
-      marketId,
-      marketPda: marketPda || market.marketPda || undefined,
+      marketId: normalizedMarketId,
+      marketPda: market.marketPda || marketPda || undefined,
       betAmount: normalizedBetAmount,
       betDirection: direction,
       mintAddress: mintAddress || market.mintAddress || DEFAULT_MINT_ADDRESS,
@@ -283,6 +341,11 @@ router.post('/bet', async (req, res) => {
     });
   } catch (error) {
     console.error('Bet persistence error:', error);
+
+    if (error.code === 11000) {
+      return sendError(res, 409, 'A mirrored bet already exists for this market and wallet');
+    }
+
     sendError(res, 500, 'Failed to persist bet');
   }
 });
@@ -296,13 +359,19 @@ router.post('/resolve', async (req, res) => {
       return sendError(res, 400, 'Missing required fields: marketId, outcome');
     }
 
-    const normalizedOutcome = outcome.toLowerCase();
+    const normalizedOutcome = normalizeDirection(outcome);
+    const normalizedMarketId = String(marketId).trim();
+
+    if (!validateMarketIdentifier(normalizedMarketId)) {
+      return sendError(res, 400, 'marketId must be a numeric string compatible with u64');
+    }
+
     if (!VALID_OUTCOMES.has(normalizedOutcome)) {
       return sendError(res, 400, 'outcome must be yes or no');
     }
 
     const resolvedMarket = await marketResolutionService.resolveMarketManually(
-      marketId,
+      normalizedMarketId,
       normalizedOutcome
     );
 
@@ -315,15 +384,17 @@ router.post('/resolve', async (req, res) => {
   } catch (error) {
     console.error('Market resolution error:', error);
 
-    if (error.message === 'Market not found') {
+    if (
+      error.message === 'Market not found' ||
+      error.message === 'Resolved market not found'
+    ) {
       return sendError(res, 404, error.message);
     }
 
-    if (error.message === 'Market is not active') {
-      return sendError(res, 400, error.message);
-    }
-
-    if (error.message === 'Market has not expired yet') {
+    if (
+      error.message === 'Market is not active' ||
+      error.message === 'Market has not expired yet'
+    ) {
       return sendError(res, 400, error.message);
     }
 
@@ -335,7 +406,13 @@ router.post('/resolve', async (req, res) => {
 router.get('/:marketId', async (req, res) => {
   try {
     const { marketId } = req.params;
-    const market = await Market.findOne({ marketId }).lean();
+    const normalizedMarketId = String(marketId || '').trim();
+
+    if (!validateMarketIdentifier(normalizedMarketId)) {
+      return sendError(res, 400, 'marketId must be a numeric string compatible with u64');
+    }
+
+    const market = await Market.findOne({ marketId: normalizedMarketId }).lean();
 
     if (!market) {
       return sendError(res, 404, 'Market not found');
