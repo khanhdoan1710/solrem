@@ -1,12 +1,11 @@
 const express = require('express');
-const { v4: uuidv4 } = require('uuid');
 const Market = require('../models/Market');
 const Bet = require('../models/Bet');
+const marketMirrorService = require('../services/marketMirrorService');
 const marketResolutionService = require('../services/marketResolution');
 
 const router = express.Router();
 
-const DEFAULT_MINT_ADDRESS = 'So11111111111111111111111111111111111111112';
 const VALID_OUTCOMES = new Set(['yes', 'no']);
 const VALID_BET_DIRECTIONS = new Set(['yes', 'no']);
 const RESOLVED_MARKET_STATUSES = ['resolved', 'refund'];
@@ -36,16 +35,12 @@ function validateMarketIdentifier(marketId) {
   return typeof marketId === 'string' && U64_STRING_PATTERN.test(marketId);
 }
 
-function calculateClaimStatus(market) {
-  return market.status === 'refund' ? 'refunded' : 'settled';
-}
-
 // Get all active prediction markets
 router.get('/active', async (req, res) => {
   try {
     const markets = await Market.find({
-      status: 'active',
-      endTime: { $gt: new Date() }
+      status: 'active',             // Market not resolved
+      endTime: { $gt: new Date() }  // Still can place bet
     })
       .sort({ endTime: 1, createdAt: -1 })
       .lean();
@@ -166,13 +161,11 @@ router.post('/create', async (req, res) => {
       return sendError(res, 400, 'endTime must be in the future');
     }
 
-    const existingMarket = await Market.findOne({
-      $or: [
-        { marketId: normalizedMarketId },
-        { marketPda },
-        { txSignature }
-      ]
-    }).lean();
+    const existingMarket = await marketMirrorService.findExistingMarketMirror({
+      marketId: normalizedMarketId,
+      marketPda,
+      txSignature
+    });
 
     if (existingMarket) {
       return res.json({
@@ -184,35 +177,18 @@ router.post('/create', async (req, res) => {
       });
     }
 
-    const market = await Market.create({
+    const { market, creatorBet } = await marketMirrorService.mirrorCreatedMarket({
+      userId,
+      creatorWallet,
       marketId: normalizedMarketId,
       marketPda,
       txSignature,
-      creatorUserId: userId,
-      creatorWallet,
       description: normalizedDescription,
       marketType,
       targetValue,
       endTime: parsedEndTime,
-      mintAddress: mintAddress || DEFAULT_MINT_ADDRESS,
-      creatorStake: normalizedCreatorStake,
-      totalPool: normalizedCreatorStake,
-      yesPool: normalizedCreatorStake,
-      noPool: 0,
-      status: 'active'
-    });
-
-    const creatorBet = await Bet.create({
-      betId: uuidv4(),
-      txSignature,
-      userId,
-      walletAddress: creatorWallet,
-      marketId: normalizedMarketId,
-      marketPda,
-      betAmount: normalizedCreatorStake,
-      betDirection: 'yes',
-      mintAddress: mintAddress || DEFAULT_MINT_ADDRESS,
-      status: 'registered'
+      mintAddress,
+      creatorStake: normalizedCreatorStake
     });
 
     res.status(201).json({
@@ -297,13 +273,11 @@ router.post('/bet', async (req, res) => {
       return sendError(res, 400, 'marketPda does not match the stored market');
     }
 
-    const existingBet = await Bet.findOne({
-      $or: [
-        { txSignature },
-        { claimTxSignature: txSignature },
-        { marketId: normalizedMarketId, walletAddress }
-      ]
-    }).lean();
+    const existingBet = await marketMirrorService.findExistingBetMirror({
+      marketId: normalizedMarketId,
+      walletAddress,
+      txSignature
+    });
 
     if (existingBet) {
       return res.json({
@@ -315,28 +289,21 @@ router.post('/bet', async (req, res) => {
       });
     }
 
-    const persistedBet = await Bet.create({
-      betId: betId || uuidv4(),
-      txSignature,
+    const {
+      bet: persistedBet,
+      market: updatedMarket
+    } = await marketMirrorService.mirrorPlacedBet({
       userId,
       walletAddress,
+      market,
       marketId: normalizedMarketId,
-      marketPda: market.marketPda || marketPda || undefined,
+      marketPda,
+      betId,
+      txSignature,
       betAmount: normalizedBetAmount,
       betDirection: direction,
-      mintAddress: mintAddress || market.mintAddress || DEFAULT_MINT_ADDRESS,
-      status: 'registered'
+      mintAddress
     });
-
-    const poolUpdate = direction === 'yes'
-      ? { totalPool: normalizedBetAmount, yesPool: normalizedBetAmount }
-      : { totalPool: normalizedBetAmount, noPool: normalizedBetAmount };
-
-    const updatedMarket = await Market.findOneAndUpdate(
-      { marketId: market.marketId },
-      { $inc: poolUpdate },
-      { new: true }
-    );
 
     res.status(201).json({
       success: true,
@@ -426,16 +393,17 @@ router.post('/claim', async (req, res) => {
       });
     }
 
-    bet.status = calculateClaimStatus(market);
-    bet.claimTxSignature = claimTxSignature;
-    bet.payoutAmount = normalizedPayoutAmount;
-    bet.claimedAt = new Date();
-    await bet.save();
+    const claimedBet = await marketMirrorService.mirrorClaim({
+      market,
+      bet,
+      claimTxSignature,
+      payoutAmount: normalizedPayoutAmount
+    });
 
     res.json({
       success: true,
       data: {
-        bet
+        bet: claimedBet
       }
     });
   } catch (error) {
