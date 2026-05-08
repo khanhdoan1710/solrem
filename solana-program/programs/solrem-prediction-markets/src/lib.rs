@@ -5,10 +5,8 @@ declare_id!("DPpLopPcTtciAXf8BNgC1sPzCpHsbedEttFrNysRsWf9");
 
 // Fixed backend authority used by the MVP; update this value when rotating the backend key.
 pub const BACKEND_AUTHORITY: Pubkey = Pubkey::new_from_array([
-    0xab, 0xed, 0xce, 0x92, 0x46, 0xf7, 0xc1, 0x3b,
-    0x0e, 0x3e, 0x95, 0x1e, 0xde, 0x1f, 0x5d, 0x33,
-    0x74, 0x3f, 0x59, 0x55, 0x49, 0xca, 0x40, 0xa1,
-    0xfb, 0x66, 0x17, 0x58, 0x8f, 0xe8, 0x22, 0x74,
+    0xab, 0xed, 0xce, 0x92, 0x46, 0xf7, 0xc1, 0x3b, 0x0e, 0x3e, 0x95, 0x1e, 0xde, 0x1f, 0x5d, 0x33,
+    0x74, 0x3f, 0x59, 0x55, 0x49, 0xca, 0x40, 0xa1, 0xfb, 0x66, 0x17, 0x58, 0x8f, 0xe8, 0x22, 0x74,
 ]);
 
 #[program]
@@ -26,9 +24,15 @@ pub mod solrem_prediction_markets {
         let market = &mut ctx.accounts.market;
         let clock = Clock::get()?;
 
-        require!(end_time > clock.unix_timestamp, ErrorCode::MarketEndTimeInPast);
+        require!(
+            end_time > clock.unix_timestamp,
+            ErrorCode::MarketEndTimeInPast
+        );
         require!(creator_stake > 0, ErrorCode::InvalidCreatorStake);
-        require!(description.as_bytes().len() <= 200, ErrorCode::DescriptionTooLong);
+        require!(
+            description.as_bytes().len() <= 200,
+            ErrorCode::DescriptionTooLong
+        );
 
         market.market_id = market_id;
         market.creator = ctx.accounts.creator.key();
@@ -83,8 +87,14 @@ pub mod solrem_prediction_markets {
         let clock = Clock::get()?;
         let market = &mut ctx.accounts.market;
 
-        require!(market.status == MarketStatus::Active, ErrorCode::MarketNotActive);
-        require!(clock.unix_timestamp < market.end_time, ErrorCode::MarketExpired);
+        require!(
+            market.status == MarketStatus::Active,
+            ErrorCode::MarketNotActive
+        );
+        require!(
+            clock.unix_timestamp < market.end_time,
+            ErrorCode::MarketExpired
+        );
 
         let bet = &mut ctx.accounts.bet;
         bet.market = market.key();
@@ -124,15 +134,18 @@ pub mod solrem_prediction_markets {
     }
 
     /// Resolve a prediction market
-    pub fn resolve_market(
-        ctx: Context<ResolveMarket>,
-        outcome: MarketOutcome,
-    ) -> Result<()> {
+    pub fn resolve_market(ctx: Context<ResolveMarket>, outcome: MarketOutcome) -> Result<()> {
         let market = &mut ctx.accounts.market;
         let clock = Clock::get()?;
 
-        require!(market.status == MarketStatus::Active, ErrorCode::MarketNotActive);
-        require!(clock.unix_timestamp >= market.end_time, ErrorCode::MarketNotExpired);
+        require!(
+            market.status == MarketStatus::Active,
+            ErrorCode::MarketNotActive
+        );
+        require!(
+            clock.unix_timestamp >= market.end_time,
+            ErrorCode::MarketNotExpired
+        );
         require_keys_eq!(
             ctx.accounts.resolver.key(),
             BACKEND_AUTHORITY,
@@ -150,7 +163,7 @@ pub mod solrem_prediction_markets {
             MarketStatus::Resolved
         };
         market.outcome = Some(outcome);
-        
+
         market.resolved_at = Some(clock.unix_timestamp);
 
         emit!(MarketResolved {
@@ -171,7 +184,10 @@ pub mod solrem_prediction_markets {
             market.status == MarketStatus::Resolved || market.status == MarketStatus::Refund,
             ErrorCode::MarketNotResolved
         );
-        require!(bet.bettor == ctx.accounts.bettor.key(), ErrorCode::UnauthorizedClaimer);
+        require!(
+            bet.bettor == ctx.accounts.bettor.key(),
+            ErrorCode::UnauthorizedClaimer
+        );
 
         let outcome = match &market.outcome {
             Some(outcome) => outcome,
@@ -198,7 +214,7 @@ pub mod solrem_prediction_markets {
 
         if winnings > 0 {
             let seeds = &[
-                b"market",
+                b"market".as_ref(),
                 market.market_id.to_le_bytes().as_ref(),
                 &[market.bump],
             ];
