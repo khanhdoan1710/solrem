@@ -60,7 +60,7 @@ const WalletModal: React.FC<WalletModalProps> = ({
         <img
           src={wallet.icon}
           alt={`${wallet.name} logo`}
-          className={`${size} rounded-2xl object-cover`}
+          className={`${size} rounded-2xl object-contain`}
         />
       );
     }

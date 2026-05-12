@@ -41,7 +41,7 @@ import {
   DollarSign,
   TrendingDown
 } from 'lucide-react';
-import { Tab, Market, UserBet, SleepData, Device, UserProfile } from './types';
+import { Tab, Market, UserBet, SleepData, Device, UserProfile, LeaderboardEntry } from './types';
 import { MOCK_RESOURCES } from './constants.mock';
 import SleepChart from './components/SleepChart';
 import ScoreRing from './components/ScoreRing';
@@ -256,9 +256,14 @@ const WALLET_INSTALL_URLS: Record<WalletType, string> = {
   Solflare: 'https://solflare.com/download',
 };
 
+const WALLET_LOGO_PATHS: Record<WalletType, string> = {
+  Phantom: '/logos/phantom.svg',
+  Solflare: '/logos/solflare.svg',
+};
+
 const App: React.FC = () => {
   // Real Solana Wallet Integration
-  const { publicKey, disconnect, connect: walletAdapterConnect, select, wallets } = useWallet();
+  const { publicKey, disconnect, connect: walletAdapterConnect, select } = useWallet();
   const walletAddress = publicKey?.toBase58() || '';
   const walletConnected = !!publicKey;
   
@@ -294,6 +299,7 @@ const App: React.FC = () => {
   const [markets, setMarkets] = useState<Market[]>([]);
   const [connectedDevices, setConnectedDevices] = useState<Device[]>([]);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   
   // Profile Edit State
   const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -308,7 +314,6 @@ const App: React.FC = () => {
   const [dataLoading, setDataLoading] = useState(true);
 
   const walletOptions = (['Phantom', 'Solflare'] as const).map((walletName) => {
-    const adapterMatch = wallets.find(({ adapter }) => adapter.name === walletName);
     const detected =
       walletName === 'Phantom'
         ? Boolean((window as any).phantom?.solana?.isPhantom)
@@ -316,7 +321,7 @@ const App: React.FC = () => {
 
     return {
       name: walletName,
-      icon: adapterMatch?.adapter.icon ?? '',
+      icon: WALLET_LOGO_PATHS[walletName],
       detected,
       badgeLabel: detected ? 'Ready' : isMobile ? 'Open App' : 'Install',
       helperText: detected
@@ -341,6 +346,9 @@ const App: React.FC = () => {
       // Load markets (always available)
       const marketsData = await dataLoader.getActiveMarkets();
       setMarkets(marketsData);
+
+      const leaderboardData = await dataLoader.getLeaderboard();
+      setLeaderboard(leaderboardData);
       
       setDataLoading(false);
     };
@@ -1037,56 +1045,125 @@ const App: React.FC = () => {
     </div>
   );
 
-  const renderLeaderboard = () => (
-    <div className="space-y-6 pb-28 animate-slide-up pt-14">
-      <h1 className="text-2xl font-display font-bold uppercase tracking-tight px-2">Leaderboard</h1>
-      
-      {/* Top 3 Podium */}
-      <div className="flex items-end justify-center gap-3 py-6">
-        {/* 2nd Place */}
-        <div className="flex flex-col items-center gap-2">
-          <Medal className="w-8 h-8 text-gray-400" />
-          <div className="w-20 h-24 glass-card border-gray-500/30 flex items-end justify-center pb-2 relative">
-             <span className="absolute top-2 text-xs font-mono text-gray-500">2ND</span>
-             <div className="w-8 h-8 rounded-full bg-gray-500/20 mb-2"></div>
-          </div>
+  const renderLeaderboard = () => {
+    if (leaderboard.length === 0) {
+      return (
+        <div className="space-y-6 pb-28 animate-slide-up pt-14">
+          <h1 className="px-2 text-2xl font-display font-bold uppercase tracking-tight">Leaderboard</h1>
+          <EmptyState
+            title="No Leaderboard Data"
+            subtitle="Sync data or switch to mock mode to populate competitive rankings."
+            icon={<Trophy className="w-8 h-8 text-gray-600" />}
+          />
         </div>
-        {/* 1st Place */}
-        <div className="flex flex-col items-center gap-2">
-          <Trophy className="w-10 h-10 text-sport drop-shadow-[0_0_10px_rgba(204,255,0,0.5)]" />
-          <div className="w-24 h-32 glass-card bg-sport/5 border-sport/50 flex items-end justify-center pb-2 relative shadow-[0_0_30px_rgba(204,255,0,0.1)]">
-             <span className="absolute top-2 text-xs font-mono text-sport font-bold">1ST</span>
-             <div className="w-10 h-10 rounded-full bg-sport/20 mb-2"></div>
-          </div>
-        </div>
-        {/* 3rd Place */}
-        <div className="flex flex-col items-center gap-2">
-          <Medal className="w-8 h-8 text-orange-700" />
-          <div className="w-20 h-20 glass-card border-orange-700/30 flex items-end justify-center pb-2 relative">
-             <span className="absolute top-2 text-xs font-mono text-orange-700">3RD</span>
-             <div className="w-8 h-8 rounded-full bg-orange-700/20 mb-2"></div>
-          </div>
-        </div>
-      </div>
+      );
+    }
 
-      <div className="glass-card rounded-sm overflow-hidden">
-        {[1, 2, 3, 4, 5].map((i) => (
-          <div key={i} className={`p-4 flex items-center justify-between border-b border-border last:border-0 ${i === 4 && userProfile ? 'bg-sport/5 border-l-2 border-l-sport' : ''}`}>
-            <div className="flex items-center gap-4">
-              <span className={`font-mono w-6 text-sm ${i <= 3 ? 'text-sport' : 'text-gray-500'}`}>{i === 4 && userProfile ? userProfile.rank : i + 3}</span>
-              <div className="flex flex-col">
-                <span className={`font-bold text-sm ${i === 4 ? 'text-white' : 'text-gray-300'}`}>
-                  {i === 4 && userProfile ? userProfile.username.toUpperCase() : `USER_ID_88${i}`}
-                </span>
-                <span className="text-[10px] text-gray-500 font-mono">ACCURACY 96.5%</span>
+    const [first, second, third] = leaderboard;
+    const remainingEntries = leaderboard.slice(3, 10);
+    const currentUserEntry = userProfile
+      ? leaderboard.find(
+          (entry) =>
+            entry.username === userProfile.username.toUpperCase() ||
+            entry.rank === userProfile.rank,
+        )
+      : undefined;
+
+    return (
+      <div className="space-y-6 pb-28 animate-slide-up pt-14">
+        <div className="px-2">
+          <h1 className="text-2xl font-display font-bold uppercase tracking-tight">Leaderboard</h1>
+          <p className="text-xs text-gray-500 font-mono">TOP SLEEP TRADERS, STREAKS & ACCURACY</p>
+        </div>
+
+        <div className="flex items-end justify-center gap-3 py-6">
+          <div className="flex flex-col items-center gap-2">
+            <Medal className="w-8 h-8 text-gray-400" />
+            <span className="text-[10px] font-mono text-gray-500">{second?.username.slice(0, 8) ?? 'OPEN'}</span>
+            <div className="relative flex w-20 items-end justify-center pb-3 h-24 glass-card border-gray-500/30">
+              <span className="absolute top-2 text-xs font-mono text-gray-500">2ND</span>
+              <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-full bg-gray-500/20 text-[10px] font-bold text-gray-300">
+                {second?.username.slice(0, 2) ?? '--'}
               </div>
             </div>
-            <span className="font-mono font-bold text-accent">{3000 - (i * 120)} PTS</span>
           </div>
-        ))}
+
+          <div className="flex flex-col items-center gap-2">
+            <Trophy className="w-10 h-10 text-sport drop-shadow-[0_0_10px_rgba(204,255,0,0.5)]" />
+            <span className="text-[10px] font-mono text-sport">{first?.username.slice(0, 9) ?? 'OPEN'}</span>
+            <div className="relative flex w-24 items-end justify-center pb-3 h-32 glass-card bg-sport/5 border-sport/50 shadow-[0_0_30px_rgba(204,255,0,0.1)]">
+              <span className="absolute top-2 text-xs font-mono font-bold text-sport">1ST</span>
+              <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-sport/20 text-xs font-bold text-sport">
+                {first?.username.slice(0, 2) ?? '--'}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-col items-center gap-2">
+            <Medal className="w-8 h-8 text-orange-700" />
+            <span className="text-[10px] font-mono text-orange-700">{third?.username.slice(0, 8) ?? 'OPEN'}</span>
+            <div className="relative flex w-20 items-end justify-center pb-3 h-20 glass-card border-orange-700/30">
+              <span className="absolute top-2 text-xs font-mono text-orange-700">3RD</span>
+              <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-full bg-orange-700/20 text-[10px] font-bold text-orange-300">
+                {third?.username.slice(0, 2) ?? '--'}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="glass-card rounded-sm overflow-hidden">
+          {remainingEntries.map((entry) => {
+            const isCurrentUser =
+              userProfile &&
+              (entry.username === userProfile.username.toUpperCase() ||
+                entry.rank === userProfile.rank);
+
+            return (
+              <div
+                key={entry.rank}
+                className={`flex items-center justify-between border-b border-border p-4 last:border-0 ${
+                  isCurrentUser ? 'bg-sport/5 border-l-2 border-l-sport' : ''
+                }`}
+              >
+                <div className="flex items-center gap-4">
+                  <span className={`w-6 font-mono text-sm ${entry.rank <= 3 ? 'text-sport' : 'text-gray-500'}`}>
+                    {entry.rank}
+                  </span>
+                  <div className="flex flex-col">
+                    <span className={`text-sm font-bold ${isCurrentUser ? 'text-white' : 'text-gray-300'}`}>
+                      {entry.username}
+                    </span>
+                    <span className="text-[10px] font-mono text-gray-500">
+                      ACCURACY {entry.accuracy.toFixed(1)}% // {entry.marketsWon} WINS // {entry.streak}D STREAK
+                    </span>
+                  </div>
+                </div>
+                <span className="font-mono font-bold text-accent">{entry.points.toLocaleString()} PTS</span>
+              </div>
+            );
+          })}
+        </div>
+
+        {userProfile && !currentUserEntry && (
+          <div className="glass-card rounded-sm border border-sport/20 bg-sport/5 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-[10px] font-mono uppercase tracking-widest text-sport">Your Position</div>
+                <div className="mt-1 text-lg font-bold text-white">{userProfile.username.toUpperCase()}</div>
+                <div className="text-[10px] font-mono text-gray-500">
+                  Rank #{userProfile.rank} // {userProfile.streak}D streak
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-[10px] font-mono uppercase text-gray-500">REM Points</div>
+                <div className="font-mono text-xl font-bold text-sport">{userProfile.remPoints.toLocaleString()}</div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderDevice = () => (
     <div className="space-y-6 pb-28 animate-slide-up pt-14">

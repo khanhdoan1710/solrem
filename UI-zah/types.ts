@@ -61,6 +61,16 @@ export interface UserProfile {
   streak: number;
 }
 
+export interface LeaderboardEntry {
+  rank: number;
+  username: string;
+  points: number;
+  accuracy: number;
+  streak: number;
+  marketsWon: number;
+  walletAddress?: string;
+}
+
 export interface ResourceItem {
   id: string;
   type: 'ARTICLE' | 'VIDEO' | 'PODCAST';
