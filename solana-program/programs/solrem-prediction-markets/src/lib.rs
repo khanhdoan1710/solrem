@@ -1,7 +1,13 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-declare_id!("SoLrEmPrEdIcTiOnMaRkEtS1111111111111111111");
+declare_id!("DPpLopPcTtciAXf8BNgC1sPzCpHsbedEttFrNysRsWf9");
+
+// Fixed backend authority used by the MVP; update this value when rotating the backend key.
+pub const BACKEND_AUTHORITY: Pubkey = Pubkey::new_from_array([
+    0xab, 0xed, 0xce, 0x92, 0x46, 0xf7, 0xc1, 0x3b, 0x0e, 0x3e, 0x95, 0x1e, 0xde, 0x1f, 0x5d, 0x33,
+    0x74, 0x3f, 0x59, 0x55, 0x49, 0xca, 0x40, 0xa1, 0xfb, 0x66, 0x17, 0x58, 0x8f, 0xe8, 0x22, 0x74,
+]);
 
 #[program]
 pub mod solrem_prediction_markets {
@@ -18,17 +24,38 @@ pub mod solrem_prediction_markets {
         let market = &mut ctx.accounts.market;
         let clock = Clock::get()?;
 
+        require!(
+            end_time > clock.unix_timestamp,
+            ErrorCode::MarketEndTimeInPast
+        );
+        require!(creator_stake > 0, ErrorCode::InvalidCreatorStake);
+        require!(
+            description.as_bytes().len() <= 200,
+            ErrorCode::DescriptionTooLong
+        );
+
         market.market_id = market_id;
         market.creator = ctx.accounts.creator.key();
         market.description = description;
         market.end_time = end_time;
         market.creator_stake = creator_stake;
         market.total_pool = creator_stake;
-        market.yes_pool = 0;
+        market.yes_pool = creator_stake;
         market.no_pool = 0;
         market.status = MarketStatus::Active;
+        market.outcome = None;
         market.created_at = clock.unix_timestamp;
+        market.resolved_at = None;
         market.bump = ctx.bumps.market;
+
+        // Create creator's bet account (auto-bet YES)
+        let creator_bet = &mut ctx.accounts.creator_bet;
+        creator_bet.market = market.key();
+        creator_bet.bettor = ctx.accounts.creator.key();
+        creator_bet.amount = creator_stake;
+        creator_bet.direction = BetDirection::Yes;
+        creator_bet.created_at = clock.unix_timestamp;
+        creator_bet.bump = ctx.bumps.creator_bet;
 
         // Transfer creator's stake to the market
         let cpi_accounts = Transfer {
@@ -57,11 +84,17 @@ pub mod solrem_prediction_markets {
         bet_amount: u64,
         bet_direction: BetDirection,
     ) -> Result<()> {
-        let market = &mut ctx.accounts.market;
         let clock = Clock::get()?;
+        let market = &mut ctx.accounts.market;
 
-        require!(market.status == MarketStatus::Active, ErrorCode::MarketNotActive);
-        require!(clock.unix_timestamp < market.end_time, ErrorCode::MarketExpired);
+        require!(
+            market.status == MarketStatus::Active,
+            ErrorCode::MarketNotActive
+        );
+        require!(
+            clock.unix_timestamp < market.end_time,
+            ErrorCode::MarketExpired
+        );
 
         let bet = &mut ctx.accounts.bet;
         bet.market = market.key();
@@ -71,7 +104,6 @@ pub mod solrem_prediction_markets {
         bet.created_at = clock.unix_timestamp;
         bet.bump = ctx.bumps.bet;
 
-        // Update market pools
         match bet_direction {
             BetDirection::Yes => {
                 market.yes_pool += bet_amount;
@@ -82,7 +114,6 @@ pub mod solrem_prediction_markets {
         }
         market.total_pool += bet_amount;
 
-        // Transfer bet amount to market
         let cpi_accounts = Transfer {
             from: ctx.accounts.bettor_token_account.to_account_info(),
             to: ctx.accounts.market_token_account.to_account_info(),
@@ -103,20 +134,37 @@ pub mod solrem_prediction_markets {
     }
 
     /// Resolve a prediction market
-    pub fn resolve_market(
-        ctx: Context<ResolveMarket>,
-        outcome: MarketOutcome,
-    ) -> Result<()> {
+    pub fn resolve_market(ctx: Context<ResolveMarket>, outcome: MarketOutcome) -> Result<()> {
         let market = &mut ctx.accounts.market;
         let clock = Clock::get()?;
 
-        require!(market.status == MarketStatus::Active, ErrorCode::MarketNotActive);
-        require!(clock.unix_timestamp >= market.end_time, ErrorCode::MarketNotExpired);
-        require!(ctx.accounts.resolver.key() == market.creator, ErrorCode::UnauthorizedResolver);
+        require!(
+            market.status == MarketStatus::Active,
+            ErrorCode::MarketNotActive
+        );
+        require!(
+            clock.unix_timestamp >= market.end_time,
+            ErrorCode::MarketNotExpired
+        );
+        require_keys_eq!(
+            ctx.accounts.resolver.key(),
+            BACKEND_AUTHORITY,
+            ErrorCode::UnauthorizedResolver
+        );
 
-        market.status = MarketStatus::Resolved;
-        market.outcome = outcome;
-        market.resolved_at = clock.unix_timestamp;
+        let winning_pool = match outcome {
+            MarketOutcome::Yes => market.yes_pool,
+            MarketOutcome::No => market.no_pool,
+        };
+
+        market.status = if winning_pool == 0 {
+            MarketStatus::Refund
+        } else {
+            MarketStatus::Resolved
+        };
+        market.outcome = Some(outcome);
+
+        market.resolved_at = Some(clock.unix_timestamp);
 
         emit!(MarketResolved {
             market: market.key(),
@@ -132,33 +180,41 @@ pub mod solrem_prediction_markets {
         let market = &ctx.accounts.market;
         let bet = &ctx.accounts.bet;
 
-        require!(market.status == MarketStatus::Resolved, ErrorCode::MarketNotResolved);
-        require!(bet.bettor == ctx.accounts.bettor.key(), ErrorCode::UnauthorizedClaimer);
+        require!(
+            market.status == MarketStatus::Resolved || market.status == MarketStatus::Refund,
+            ErrorCode::MarketNotResolved
+        );
+        require!(
+            bet.bettor == ctx.accounts.bettor.key(),
+            ErrorCode::UnauthorizedClaimer
+        );
 
-        // Calculate winnings based on market outcome and bet direction
-        let winning_pool = match market.outcome {
-            MarketOutcome::Yes => market.yes_pool,
-            MarketOutcome::No => market.no_pool,
+        let outcome = match &market.outcome {
+            Some(outcome) => outcome,
+            None => return err!(ErrorCode::MarketNotResolved),
         };
 
-        let total_winning_bets = match market.outcome {
-            MarketOutcome::Yes => market.yes_pool,
-            MarketOutcome::No => market.no_pool,
-        };
-
-        let winnings = if (market.outcome == MarketOutcome::Yes && bet.direction == BetDirection::Yes)
-            || (market.outcome == MarketOutcome::No && bet.direction == BetDirection::No)
-        {
-            // Calculate proportional winnings
-            (bet.amount * market.total_pool) / total_winning_bets
+        let winnings = if market.status == MarketStatus::Refund {
+            bet.amount
         } else {
-            0
+            let total_winning_bets = match outcome {
+                MarketOutcome::Yes => market.yes_pool,
+                MarketOutcome::No => market.no_pool,
+            };
+
+            if total_winning_bets > 0
+                && ((outcome == &MarketOutcome::Yes && bet.direction == BetDirection::Yes)
+                    || (outcome == &MarketOutcome::No && bet.direction == BetDirection::No))
+            {
+                (bet.amount * market.total_pool) / total_winning_bets
+            } else {
+                0
+            }
         };
 
         if winnings > 0 {
-            // Transfer winnings to bettor
             let seeds = &[
-                b"market",
+                b"market".as_ref(),
                 market.market_id.to_le_bytes().as_ref(),
                 &[market.bump],
             ];
@@ -195,17 +251,26 @@ pub struct CreateMarket<'info> {
         bump
     )]
     pub market: Account<'info, Market>,
-    
+
+    #[account(
+        init,
+        payer = creator,
+        space = 8 + Bet::INIT_SPACE,
+        seeds = [b"bet", market.key().as_ref(), creator.key().as_ref()],
+        bump
+    )]
+    pub creator_bet: Account<'info, Bet>,
+
     #[account(mut)]
     pub creator: Signer<'info>,
-    
+
     #[account(
         mut,
         associated_token::mint = mint,
         associated_token::authority = creator
     )]
     pub creator_token_account: Account<'info, TokenAccount>,
-    
+
     #[account(
         init,
         payer = creator,
@@ -213,7 +278,7 @@ pub struct CreateMarket<'info> {
         associated_token::authority = market
     )]
     pub market_token_account: Account<'info, TokenAccount>,
-    
+
     pub mint: Account<'info, token::Mint>,
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, anchor_spl::associated_token::AssociatedToken>,
@@ -224,7 +289,7 @@ pub struct CreateMarket<'info> {
 pub struct PlaceBet<'info> {
     #[account(mut)]
     pub market: Account<'info, Market>,
-    
+
     #[account(
         init,
         payer = bettor,
@@ -233,24 +298,24 @@ pub struct PlaceBet<'info> {
         bump
     )]
     pub bet: Account<'info, Bet>,
-    
+
     #[account(mut)]
     pub bettor: Signer<'info>,
-    
+
     #[account(
         mut,
         associated_token::mint = mint,
         associated_token::authority = bettor
     )]
     pub bettor_token_account: Account<'info, TokenAccount>,
-    
+
     #[account(
         mut,
         associated_token::mint = mint,
         associated_token::authority = market
     )]
     pub market_token_account: Account<'info, TokenAccount>,
-    
+
     pub mint: Account<'info, token::Mint>,
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, anchor_spl::associated_token::AssociatedToken>,
@@ -268,31 +333,32 @@ pub struct ResolveMarket<'info> {
 pub struct ClaimWinnings<'info> {
     #[account(mut)]
     pub market: Account<'info, Market>,
-    
+
     #[account(
         mut,
         seeds = [b"bet", market.key().as_ref(), bettor.key().as_ref()],
-        bump = bet.bump
+        bump = bet.bump,
+        close = bettor
     )]
     pub bet: Account<'info, Bet>,
-    
+
     #[account(mut)]
     pub bettor: Signer<'info>,
-    
+
     #[account(
         mut,
         associated_token::mint = mint,
         associated_token::authority = bettor
     )]
     pub bettor_token_account: Account<'info, TokenAccount>,
-    
+
     #[account(
         mut,
         associated_token::mint = mint,
         associated_token::authority = market
     )]
     pub market_token_account: Account<'info, TokenAccount>,
-    
+
     pub mint: Account<'info, token::Mint>,
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, anchor_spl::associated_token::AssociatedToken>,
@@ -303,6 +369,7 @@ pub struct ClaimWinnings<'info> {
 pub struct Market {
     pub market_id: u64,
     pub creator: Pubkey,
+    #[max_len(200)]
     pub description: String,
     pub end_time: i64,
     pub creator_stake: u64,
@@ -327,20 +394,21 @@ pub struct Bet {
     pub bump: u8,
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq, InitSpace)]
 pub enum MarketStatus {
     Active,
     Resolved,
+    Refund,
     Cancelled,
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq, InitSpace)]
 pub enum MarketOutcome {
     Yes,
     No,
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq, InitSpace)]
 pub enum BetDirection {
     Yes,
     No,
@@ -383,6 +451,12 @@ pub enum ErrorCode {
     MarketNotActive,
     #[msg("Market has expired")]
     MarketExpired,
+    #[msg("Market end time must be in the future")]
+    MarketEndTimeInPast,
+    #[msg("Creator stake must be greater than zero")]
+    InvalidCreatorStake,
+    #[msg("Description is too long")]
+    DescriptionTooLong,
     #[msg("Market has not expired yet")]
     MarketNotExpired,
     #[msg("Market is not resolved")]

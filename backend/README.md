@@ -70,6 +70,44 @@ Backend server for the SolREM sleep tracking and prediction market application.
 - `GET /api/markets/active` - Get active markets
 - `POST /api/markets/create` - Create new market
 - `POST /api/markets/bet` - Place bet on market
+- `POST /api/markets/resolve` - Resolve an expired market with backend authority
+- `POST /api/markets/claim` - Mirror claim status after a client claim
+- `GET /api/markets/:marketId` - Get market details
+- `GET /api/markets/history/resolved` - Get resolution history
+
+## Prediction Market Demo
+
+This demo is designed for the current backend-first prediction market milestone. It
+shows Mongo-backed market persistence, mirrored bets and claims, and sleep-record
+based market resolution.
+
+Current demo status:
+- Mongo-backed market mirror flow is implemented for create, bet, claim, and reads.
+- Sleep-record resolution is implemented for backend-defined market types.
+- Solana `resolve_market` backend signing is still stubbed in `services/solanaService.js`.
+- Frontend/mobile market screens still use mock-heavy flows and are not the source of truth.
+
+Run the backend demo:
+
+```bash
+cd backend
+npm install
+
+# Optional: set MONGODB_URI if you are not using mongodb://localhost:27017/solrem
+npm run demo:seed
+npm run dev
+```
+
+In a second terminal:
+
+```bash
+cd backend
+npm run demo:smoke
+npm test
+```
+
+The seed script only replaces demo records for market IDs `9000001`, `9000002`,
+and `9000003`. It leaves non-demo data untouched.
 
 ## Sleep Scoring Algorithm
 

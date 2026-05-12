@@ -6,6 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
+    "demo:seed": "node scripts/seedPredictionMarketDemo.js",
+    "demo:smoke": "node scripts/smokePredictionMarketDemo.js",
     "test": "jest"
   },
   "dependencies": {
