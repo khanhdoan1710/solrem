@@ -122,6 +122,21 @@ describe('markets routes', () => {
     });
   });
 
+  it('rejects market creation when required fields are missing', async () => {
+    const response = await request(app)
+      .post('/api/markets/create')
+      .send({
+        userId: 'user-1',
+        marketId: '123'
+      })
+      .expect(400);
+
+    expect(response.body.success).toBe(false);
+    expect(response.body.error).toContain('Missing required fields');
+    expect(Market.create).not.toHaveBeenCalled();
+    expect(Bet.create).not.toHaveBeenCalled();
+  });
+
   it('does not increment pools when a mirrored bet already exists', async () => {
     const existingBet = {
       betId: 'existing-bet',
@@ -160,6 +175,36 @@ describe('markets routes', () => {
         alreadyPersisted: true
       }
     });
+  });
+
+  it('rejects bets when the market is expired', async () => {
+    Market.findOne.mockResolvedValue({
+      marketId: '123',
+      marketPda: 'market-pda',
+      status: 'active',
+      endTime: new Date(Date.now() - 60 * 1000),
+      mintAddress: 'mint'
+    });
+
+    const response = await request(app)
+      .post('/api/markets/bet')
+      .send({
+        userId: 'user-2',
+        walletAddress: 'bettor-wallet',
+        marketId: '123',
+        marketPda: 'market-pda',
+        txSignature: 'bet-tx',
+        betAmount: 50,
+        betDirection: 'yes'
+      })
+      .expect(400);
+
+    expect(response.body).toEqual({
+      success: false,
+      error: 'Market is no longer active'
+    });
+    expect(Bet.create).not.toHaveBeenCalled();
+    expect(Market.findOneAndUpdate).not.toHaveBeenCalled();
   });
 
   it('marks claims as refunded when the market resolved to refund', async () => {
@@ -213,5 +258,21 @@ describe('markets routes', () => {
       success: true,
       data: { markets }
     });
+  });
+
+  it('rejects manual resolution with an invalid outcome', async () => {
+    const response = await request(app)
+      .post('/api/markets/resolve')
+      .send({
+        marketId: '123',
+        outcome: 'maybe'
+      })
+      .expect(400);
+
+    expect(response.body).toEqual({
+      success: false,
+      error: 'outcome must be yes or no'
+    });
+    expect(marketResolutionService.resolveMarketManually).not.toHaveBeenCalled();
   });
 });

@@ -73,6 +73,34 @@ describe('marketResolutionService', () => {
     expect(status).toBe('refund');
   });
 
+  it('marks a market as refund when the yes side has no bettors', () => {
+    const status = marketResolutionService.getResolutionStatus(
+      {
+        yesPool: 0,
+        noPool: 100
+      },
+      'yes'
+    );
+
+    expect(status).toBe('refund');
+  });
+
+  it('returns yes when sleep duration meets the target', () => {
+    const outcome = marketResolutionService.determineOutcome(
+      {
+        marketType: 'sleep-duration',
+        targetValue: 8
+      },
+      {
+        rawData: {
+          totalSleepTime: 8 * 60
+        }
+      }
+    );
+
+    expect(outcome).toBe('yes');
+  });
+
   it('returns no when rem percentage cannot be computed', () => {
     const outcome = marketResolutionService.resolveRemPercentage(
       { targetValue: 20 },
