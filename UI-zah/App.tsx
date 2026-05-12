@@ -258,7 +258,7 @@ const WALLET_INSTALL_URLS: Record<WalletType, string> = {
 
 const WALLET_LOGO_PATHS: Record<WalletType, string> = {
   Phantom: '/logos/phantom.svg',
-  Solflare: '/logos/solflare.svg',
+  Solflare: '/logos/solflare.png',
 };
 
 const App: React.FC = () => {
