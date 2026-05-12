@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { useWalletModal } from '@solana/wallet-adapter-react-ui';
-import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { 
   Home, 
   BarChart2, 
@@ -47,7 +45,10 @@ import { Tab, Market, UserBet, SleepData, Device, UserProfile } from './types';
 import { MOCK_RESOURCES } from './constants.mock';
 import SleepChart from './components/SleepChart';
 import ScoreRing from './components/ScoreRing';
-import WalletModal from './components/WalletModal';
+import WalletModal, {
+  type WalletModalState,
+  type WalletType,
+} from './components/WalletModal';
 import { generateSleepInsights } from './services/geminiService';
 import * as dataLoader from './services/dataLoader';
 import * as walletService from './services/walletService';
@@ -250,10 +251,14 @@ const LandingPage: React.FC<{ onOpenConnect: () => void; onGuest: () => void }> 
   </div>
 );
 
+const WALLET_INSTALL_URLS: Record<WalletType, string> = {
+  Phantom: 'https://phantom.app/download',
+  Solflare: 'https://solflare.com/download',
+};
+
 const App: React.FC = () => {
   // Real Solana Wallet Integration
-  const { publicKey, disconnect, signTransaction, connect: walletAdapterConnect, select } = useWallet();
-  const { setVisible } = useWalletModal();
+  const { publicKey, disconnect, connect: walletAdapterConnect, select, wallets } = useWallet();
   const walletAddress = publicKey?.toBase58() || '';
   const walletConnected = !!publicKey;
   
@@ -295,11 +300,34 @@ const App: React.FC = () => {
   const [tempProfile, setTempProfile] = useState<UserProfile | null>(null);
 
   // Simulation states
-  const [isLoading, setIsLoading] = useState(false);
+  const [isBetLoading, setIsBetLoading] = useState(false);
+  const [walletModalState, setWalletModalState] = useState<WalletModalState>({ status: 'idle' });
   const [isSuccess, setIsSuccess] = useState(false); // For success animation
   const [isError, setIsError] = useState(false); // For error animation
   const [isScanning, setIsScanning] = useState(false);
   const [dataLoading, setDataLoading] = useState(true);
+
+  const walletOptions = (['Phantom', 'Solflare'] as const).map((walletName) => {
+    const adapterMatch = wallets.find(({ adapter }) => adapter.name === walletName);
+    const detected =
+      walletName === 'Phantom'
+        ? Boolean((window as any).phantom?.solana?.isPhantom)
+        : Boolean((window as any).solflare?.isSolflare);
+
+    return {
+      name: walletName,
+      icon: adapterMatch?.adapter.icon ?? '',
+      detected,
+      badgeLabel: detected ? 'Ready' : isMobile ? 'Open App' : 'Install',
+      helperText: detected
+        ? isMobile
+          ? 'Detected in wallet app'
+          : 'Detected in this browser'
+        : isMobile
+          ? 'Install app or reopen this page inside the wallet browser'
+          : 'Install the extension to continue',
+    };
+  });
 
   // Load initial data on mount
   useEffect(() => {
@@ -370,6 +398,8 @@ const App: React.FC = () => {
       
       // Exit onboarding
       setIsOnboarding(false);
+      setShowWalletModal(false);
+      setWalletModalState({ status: 'idle' });
       
       const loadUserData = async () => {
         setDataLoading(true);
@@ -427,6 +457,7 @@ const App: React.FC = () => {
       // Reset to onboarding when wallet disconnects (but not on initial load)
       console.log('👋 Wallet disconnected, back to onboarding');
       setIsOnboarding(true);
+      setWalletModalState({ status: 'idle' });
     }
   }, [walletConnected, walletAddress]);
 
@@ -441,127 +472,152 @@ const App: React.FC = () => {
     wasoMinutes: 0,
   };
 
-  const handleEnterGuest = () => {
-    // Guest mode disabled - production requires real wallet
-    alert('⚠️ Guest mode is disabled. Please connect a Solana wallet to continue.');
+  const openWalletModal = () => {
+    setWalletModalState({ status: 'idle' });
     setShowWalletModal(true);
   };
 
-  const handleConnectWallet = async (walletType: 'Phantom' | 'Solflare') => {
+  const handleWalletModalClose = () => {
+    if (walletModalState.status === 'connecting') return;
+    setShowWalletModal(false);
+    setWalletModalState({ status: 'idle' });
+  };
+
+  const handleWalletModalPrimaryAction = () => {
+    if (!walletModalState.walletType) return;
+
+    if (walletModalState.status === 'install') {
+      window.open(
+        WALLET_INSTALL_URLS[walletModalState.walletType],
+        '_blank',
+        'noopener,noreferrer',
+      );
+      return;
+    }
+
+    if (walletModalState.status === 'error') {
+      void handleConnectWallet(walletModalState.walletType);
+    }
+  };
+
+  const handleEnterGuest = () => {
+    // Guest mode disabled - production requires real wallet
+    alert('⚠️ Guest mode is disabled. Please connect a Solana wallet to continue.');
+    openWalletModal();
+  };
+
+  const handleConnectWallet = async (walletType: WalletType) => {
     console.log('🔌 Connecting wallet:', walletType);
-    setIsLoading(true);
-    
+    setWalletModalState({
+      status: 'connecting',
+      walletType,
+      title: `Connecting ${walletType}`,
+      description: isMobile
+        ? `Approve this connection inside ${walletType} to continue into SolREM.`
+        : `Approve the connection request in ${walletType} and return here once it is confirmed.`,
+    });
+
     try {
-      // Check if Phantom/Solflare is available in browser (mobile or desktop)
       const windowPhantom = (window as any).phantom?.solana;
       const windowSolflare = (window as any).solflare;
-      
-      // Try to connect directly via injected wallet (works for both mobile & desktop)
+
       if (walletType === 'Phantom') {
         if (windowPhantom && windowPhantom.isPhantom) {
           console.log('✅ Phantom detected, connecting...');
           try {
-            // First, select the wallet in wallet adapter
-            const phantomWalletName = 'Phantom';
-            select(phantomWalletName as any);
-            
-            // Then connect via wallet adapter (this will use the injected wallet)
+            select('Phantom' as any);
+            await new Promise((resolve) => setTimeout(resolve, 120));
             await walletAdapterConnect();
-            
+
             console.log('✅ Connected to Phantom via adapter');
             setShowWalletModal(false);
-            setIsLoading(false);
+            setWalletModalState({ status: 'idle' });
             return;
           } catch (err: any) {
             console.error('❌ Phantom connection failed:', err);
-            if (err.code === 4001) {
-              alert('❌ Connection rejected. Please try again.');
-            } else {
-              alert('❌ Failed to connect to Phantom. Please try again.');
-            }
-            setIsLoading(false);
+            const message = String(err?.message ?? '').toLowerCase();
+            const wasRejected =
+              err?.code === 4001 ||
+              message.includes('reject') ||
+              message.includes('declin') ||
+              message.includes('cancel');
+
+            setWalletModalState({
+              status: 'error',
+              walletType,
+              title: wasRejected ? 'Connection canceled' : 'Phantom unavailable',
+              description: wasRejected
+                ? 'Phantom dismissed the request. Reopen the chooser when you are ready to try again.'
+                : 'Phantom did not complete the handshake. Check the extension popup and retry once.',
+              actionLabel: 'Try Again',
+            });
             return;
           }
-        } else {
-          // Phantom not installed
-          if (isMobile) {
-            alert(
-              '📱 Phantom Not Found!\n\n' +
-              '1. Install Phantom app from App Store/Play Store\n' +
-              '2. Open Phantom app\n' +
-              '3. Use browser inside Phantom\n' +
-              '4. Visit this site again'
-            );
-          } else {
-            const install = confirm(
-              '🦊 Phantom Extension Not Found!\n\n' +
-              'Install Phantom browser extension to continue.\n\n' +
-              'Click OK to visit Phantom.app'
-            );
-            if (install) {
-              window.open('https://phantom.app/download', '_blank');
-            }
-          }
-          setIsLoading(false);
+        }
+
+        setWalletModalState({
+          status: 'install',
+          walletType,
+          title: 'Install Phantom',
+          description: isMobile
+            ? 'Install Phantom and reopen this page from inside the Phantom browser, then try again.'
+            : 'Phantom is not detected in this browser. Install the extension, refresh, and reconnect.',
+          actionLabel: 'Get Phantom',
+        });
+        return;
+      }
+
+      if (windowSolflare && windowSolflare.isSolflare) {
+        console.log('✅ Solflare detected, connecting...');
+        try {
+          select('Solflare' as any);
+          await new Promise((resolve) => setTimeout(resolve, 120));
+          await walletAdapterConnect();
+
+          console.log('✅ Connected to Solflare via adapter');
+          setShowWalletModal(false);
+          setWalletModalState({ status: 'idle' });
+          return;
+        } catch (err: any) {
+          console.error('❌ Solflare connection failed:', err);
+          const message = String(err?.message ?? '').toLowerCase();
+          const wasRejected =
+            err?.code === 4001 ||
+            message.includes('reject') ||
+            message.includes('declin') ||
+            message.includes('cancel');
+
+          setWalletModalState({
+            status: 'error',
+            walletType,
+            title: wasRejected ? 'Connection canceled' : 'Solflare unavailable',
+            description: wasRejected
+              ? 'Solflare dismissed the request. Reopen the chooser when you are ready to try again.'
+              : 'Solflare did not complete the handshake. Check the wallet popup and retry once.',
+            actionLabel: 'Try Again',
+          });
           return;
         }
       }
-      
-      if (walletType === 'Solflare') {
-        if (windowSolflare && windowSolflare.isSolflare) {
-          console.log('✅ Solflare detected, connecting...');
-          try {
-            // First, select the wallet in wallet adapter
-            const solflareWalletName = 'Solflare';
-            select(solflareWalletName as any);
-            
-            // Then connect via wallet adapter
-            await walletAdapterConnect();
-            
-            console.log('✅ Connected to Solflare via adapter');
-            setShowWalletModal(false);
-            setIsLoading(false);
-            return;
-          } catch (err: any) {
-            console.error('❌ Solflare connection failed:', err);
-            if (err.code === 4001) {
-              alert('❌ Connection rejected. Please try again.');
-            } else {
-              alert('❌ Failed to connect to Solflare. Please try again.');
-            }
-            setIsLoading(false);
-            return;
-          }
-        } else {
-          // Solflare not installed
-          if (isMobile) {
-            alert(
-              '📱 Solflare Not Found!\n\n' +
-              '1. Install Solflare app from App Store/Play Store\n' +
-              '2. Open Solflare app\n' +
-              '3. Use browser inside Solflare\n' +
-              '4. Visit this site again'
-            );
-          } else {
-            const install = confirm(
-              '🔥 Solflare Extension Not Found!\n\n' +
-              'Install Solflare browser extension to continue.\n\n' +
-              'Click OK to visit Solflare.com'
-            );
-            if (install) {
-              window.open('https://solflare.com/download', '_blank');
-            }
-          }
-          setIsLoading(false);
-          return;
-        }
-      }
-      
+
+      setWalletModalState({
+        status: 'install',
+        walletType,
+        title: 'Install Solflare',
+        description: isMobile
+          ? 'Install Solflare and reopen this page from inside the Solflare browser, then try again.'
+          : 'Solflare is not detected in this browser. Install the extension, refresh, and reconnect.',
+        actionLabel: 'Get Solflare',
+      });
     } catch (error) {
       console.error('❌ Wallet connection error:', error);
-      alert('Failed to connect wallet. Please try again.');
-      setIsLoading(false);
-      setShowWalletModal(false);
+      setWalletModalState({
+        status: 'error',
+        walletType,
+        title: `Couldn't connect ${walletType}`,
+        description: 'The wallet flow exited unexpectedly. Please retry the connection once.',
+        actionLabel: 'Try Again',
+      });
     }
   };
 
@@ -598,7 +654,7 @@ const App: React.FC = () => {
 
   const handlePlaceBet = async () => {
     if (!showBetModal || !walletAddress) return;
-    setIsLoading(true);
+    setIsBetLoading(true);
     
     const entryPrice = betPosition === 'YES' ? showBetModal.yesPercent : showBetModal.noPercent;
     const potentialPayout = betAmount * (100 / entryPrice);
@@ -630,7 +686,7 @@ const App: React.FC = () => {
         setActiveBets([...activeBets, newBet]);
         
         // Important: Turn off loading BEFORE showing success
-        setIsLoading(false);
+        setIsBetLoading(false);
         
         // Small delay then show success animation
         setTimeout(() => {
@@ -638,14 +694,14 @@ const App: React.FC = () => {
         }, 100);
       } else {
         // If failed, show error
-        setIsLoading(false);
+        setIsBetLoading(false);
         setTimeout(() => {
           setIsError(true);
         }, 100);
       }
     } catch (error) {
       console.error('❌ Bet placement error:', error);
-      setIsLoading(false);
+      setIsBetLoading(false);
       setTimeout(() => {
         setIsError(true);
       }, 100);
@@ -732,12 +788,12 @@ const App: React.FC = () => {
           </div>
         </div>
         <button 
-          onClick={() => walletConnected ? setShowWalletDetails(true) : setShowWalletModal(true)}
+          onClick={() => walletConnected ? setShowWalletDetails(true) : openWalletModal()}
           className={`flex items-center gap-2 px-3 py-1.5 rounded border transition-all ${walletConnected ? 'border-sport/30 bg-sport/10 text-sport hover:bg-sport/20' : 'border-border bg-surface text-gray-400 hover:text-white'}`}
         >
           <Wallet className="w-4 h-4" />
           <span className="text-xs font-mono font-bold">
-            {walletConnected ? '8x...3f29' : 'Connect'}
+            {walletConnected ? walletService.shortenAddress(walletAddress, 4) : 'Connect'}
           </span>
         </button>
       </div>
@@ -1307,14 +1363,16 @@ const App: React.FC = () => {
   if (isOnboarding) {
       return (
         <>
-          <LandingPage onOpenConnect={() => setShowWalletModal(true)} onGuest={handleEnterGuest} />
+          <LandingPage onOpenConnect={openWalletModal} onGuest={handleEnterGuest} />
           <WalletModal
             isOpen={showWalletModal}
-            isLoading={isLoading}
             isMobile={isMobile}
-            onClose={() => setShowWalletModal(false)}
+            wallets={walletOptions}
+            state={walletModalState}
+            onClose={handleWalletModalClose}
             onSelectWallet={handleConnectWallet}
-            LoadingComponent={<LoadingState text="CONNECTING..." />}
+            onPrimaryAction={handleWalletModalPrimaryAction}
+            onBackToWalletList={() => setWalletModalState({ status: 'idle' })}
           />
         </>
       );
@@ -1351,11 +1409,13 @@ const App: React.FC = () => {
       {/* Wallet Modal (In-App) - Reusable Component */}
       <WalletModal
         isOpen={showWalletModal}
-        isLoading={isLoading}
         isMobile={isMobile}
-        onClose={() => setShowWalletModal(false)}
+        wallets={walletOptions}
+        state={walletModalState}
+        onClose={handleWalletModalClose}
         onSelectWallet={handleConnectWallet}
-        LoadingComponent={<LoadingState text="CONNECTING..." />}
+        onPrimaryAction={handleWalletModalPrimaryAction}
+        onBackToWalletList={() => setWalletModalState({ status: 'idle' })}
       />
 
       {/* Wallet Details / Disconnect Modal - Centered */}
@@ -1394,7 +1454,7 @@ const App: React.FC = () => {
       {/* Betting Modal (Redesigned) - Centered */}
       {showBetModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
-            {isLoading ? (
+            {isBetLoading ? (
                 <div className="glass-panel w-full max-w-md rounded-xl p-8 border border-sport/20 shadow-2xl animate-slide-up bg-[#09090b]">
                    <LoadingState text="CONFIRMING ORDER..." />
                 </div>
